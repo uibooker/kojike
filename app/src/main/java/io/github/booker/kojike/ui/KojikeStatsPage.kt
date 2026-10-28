@@ -1,6 +1,6 @@
 package io.github.booker.kojike.ui
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -286,19 +286,88 @@ class KojikeStatsPage(private val context: Context) {
         )
     }
 
-    /** 清空确认弹窗（防误触）。 */
+    /** 清空确认弹窗（防误触）。自绘圆角卡片样式；dismiss 后把焦点还回列表，否则滑动失效。 */
     private fun confirmClear() {
         runCatching {
             val activity = context as? android.app.Activity ?: return
-            AlertDialog.Builder(activity)
-                .setTitle("清空统计")
-                .setMessage("确定清空当前用户的全部圈子统计吗？此操作不可撤销。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("清空") { _, _ ->
-                    TopicStatsStore.clear(TopicStatsStore.lastProfileUsername)
-                    showTopics()
+            val dialog = Dialog(activity)
+            val box = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundDrawable(
+                    GradientDrawable().apply {
+                        cornerRadius = dp(16).toFloat()
+                        setColor(Color.WHITE)
+                    }
+                )
+                setPadding(dp(24), dp(24), dp(24), dp(12))
+            }
+            box.addView(
+                TextView(context).apply {
+                    text = "清空统计"
+                    textSize = 17f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(Color.BLACK)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            )
+            box.addView(
+                TextView(context).apply {
+                    text = "确定清空当前全部圈子统计吗？"
+                    textSize = 14f
+                    setTextColor(0xFF666666.toInt())
+                    setPadding(0, dp(12), 0, 0)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            )
+            val actions = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END
+                setPadding(0, dp(24), 0, dp(8))
+            }
+            val cancel = TextView(context).apply {
+                text = "取消"
+                textSize = 14f
+                setTextColor(0xFF888888.toInt())
+                setPadding(dp(16), dp(8), dp(16), dp(8))
+            }
+            val confirm = TextView(context).apply {
+                text = "清空"
+                textSize = 14f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                setBackgroundDrawable(
+                    GradientDrawable().apply {
+                        cornerRadius = dp(18).toFloat()
+                        setColor(0xFFE53935.toInt())
+                    }
+                )
+                setPadding(dp(20), dp(8), dp(20), dp(8))
+                (layoutParams as? LinearLayout.LayoutParams)?.marginStart = dp(12)
+            }
+            actions.addView(cancel)
+            actions.addView(
+                confirm,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = dp(12)
                 }
-                .show()
+            )
+            box.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            dialog.setContentView(box)
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.setOnDismissListener {
+                // 系统对话框收起时会带走触摸焦点，不还回来列表就滑不动
+                val scroll = body?.getChildAt(0)
+                scroll?.isFocusable = true
+                scroll?.isFocusableInTouchMode = true
+                scroll?.requestFocus()
+            }
+            cancel.setOnClickListener { dialog.dismiss() }
+            confirm.setOnClickListener {
+                TopicStatsStore.clear(TopicStatsStore.lastProfileUsername)
+                dialog.dismiss()
+                showTopics()
+            }
+            dialog.show()
         }.onFailure { error ->
             if (error is VirtualMachineError || error is ThreadDeath) throw error
             KojikeLog.error("confirm clear failed", error)
