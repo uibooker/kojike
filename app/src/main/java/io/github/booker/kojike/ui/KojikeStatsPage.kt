@@ -28,6 +28,12 @@ import io.github.booker.kojike.stats.TopicStatsStore
  */
 class KojikeStatsPage(private val context: Context) {
 
+    private companion object {
+        // 宿主色板：tint_jikeBlue=#03A9F4、tag 底 bg_on_body_2=#F0F3F5（反编译取值）
+        val JIKE_BLUE: Int = 0xFF03A9F4.toInt()
+        val TAG_BG_FALLBACK: Int = 0xFFF0F3F5.toInt()
+    }
+
     private var body: FrameLayout? = null
     private var titleView: TextView? = null
 
@@ -120,24 +126,58 @@ class KojikeStatsPage(private val context: Context) {
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(16), dp(14), dp(16), dp(14))
+                    setPadding(dp(12), dp(7), dp(16), dp(7))
                     isClickable = true
                     setRipple()
                 }
+                // 宿主 TopicTagLayout 同款胶囊：灰底圆角 10dp + 16dp 蓝色话题圆标 + 蓝字
+                val tag = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setBackgroundDrawable(
+                        GradientDrawable().apply {
+                            cornerRadius = dp(10).toFloat()
+                            setColor(tagBgColor())
+                        }
+                    )
+                    setPadding(dp(5), dp(5), dp(10), dp(5))
+                }
+                val icon = TextView(context).apply {
+                    text = "#"
+                    textSize = 11f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                    setBackgroundDrawable(
+                        GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(JIKE_BLUE)
+                        }
+                    )
+                }
+                tag.addView(icon, LinearLayout.LayoutParams(dp(16), dp(16)))
                 val nameView = TextView(context).apply {
                     text = name
-                    textSize = 15f
-                    setTextColor(primary)
+                    textSize = 14f
+                    setTextColor(JIKE_BLUE)
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                 }
+                tag.addView(
+                    nameView,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = dp(6)
+                    }
+                )
+                row.addView(tag, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 val countView = TextView(context).apply {
                     text = "$count 条 ›"
                     textSize = 13f
                     setTextColor(secondary)
                 }
-                row.addView(nameView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                row.addView(countView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                row.addView(countView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                })
                 row.setOnClickListener {
                     try {
                         showPosts(name)
@@ -289,6 +329,51 @@ class KojikeStatsPage(private val context: Context) {
                     topMargin = dp(4)
                 }
             )
+            // 宿主动态同款圈子 tag：胶囊 + 蓝 # 圆标 + 蓝字
+            card.addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setBackgroundDrawable(
+                        GradientDrawable().apply {
+                            cornerRadius = dp(10).toFloat()
+                            setColor(tagBgColor())
+                        }
+                    )
+                    setPadding(dp(5), dp(4), dp(10), dp(4))
+                    addView(
+                        TextView(context).apply {
+                            text = "#"
+                            textSize = 10f
+                            setTypeface(typeface, Typeface.BOLD)
+                            setTextColor(Color.WHITE)
+                            gravity = Gravity.CENTER
+                            setBackgroundDrawable(
+                                GradientDrawable().apply {
+                                    shape = GradientDrawable.OVAL
+                                    setColor(JIKE_BLUE)
+                                }
+                            )
+                        },
+                        LinearLayout.LayoutParams(dp(14), dp(14))
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = topic
+                            textSize = 12f
+                            setTextColor(JIKE_BLUE)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                        },
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            marginStart = dp(5)
+                        }
+                    )
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(8)
+                }
+            )
             list.addView(
                 card,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -308,6 +393,15 @@ class KojikeStatsPage(private val context: Context) {
     }
 
     // ---------------------------------------------------------------- 工具
+
+    /** tag 背景色：宿主 bg_on_body_2（浅 #F0F3F5 / 夜间 #262626）。 */
+    private fun tagBgColor(): Int = themeColor(android.R.attr.colorBackground, TAG_BG_FALLBACK).let { fallback ->
+        runCatching {
+            // 夜间模式近似：亮度低时用深灰
+            val lum = Color.luminance(fallback)
+            if (lum < 0.3f) 0xFF262626.toInt() else TAG_BG_FALLBACK
+        }.getOrDefault(TAG_BG_FALLBACK)
+    }
 
     private fun View.setRipple() {
         val value = TypedValue()
