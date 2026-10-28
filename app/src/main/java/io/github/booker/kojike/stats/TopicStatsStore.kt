@@ -42,6 +42,9 @@ object TopicStatsStore {
         if (!username.isNullOrEmpty()) lastProfileUsername = username
     }
 
+    /** 无圈子的动态（纯文字/纯转发等）归入此虚拟圈子名下，与真实圈子同列。 */
+    const val NO_TOPIC = "无圈子"
+
     /** 把一页动态计入 username 名下。posts 是反射来的 Message 对象，元素类型不感知。 */
     fun recordPosts(username: String, posts: List<*>) {
         if (username.isEmpty() || posts.isEmpty()) return
@@ -61,12 +64,11 @@ object TopicStatsStore {
                     stat.seenPostIds.remove(postId)
                 }
                 stat.totalPosts++
-                if (topicName != null) {
-                    stat.topicCounts[topicName] = (stat.topicCounts[topicName] ?: 0) + 1
-                    val bucket = stat.topicPosts.getOrPut(topicName) { ArrayList() }
-                    if (bucket.size < MAX_TOPIC_POSTS) {
-                        bucket.add(PostEntry(postId, extractDate(post), extractContent(post), extractRoute(post)))
-                    }
+                val bucketName = topicName ?: NO_TOPIC
+                stat.topicCounts[bucketName] = (stat.topicCounts[bucketName] ?: 0) + 1
+                val bucket = stat.topicPosts.getOrPut(bucketName) { ArrayList() }
+                if (bucket.size < MAX_TOPIC_POSTS) {
+                    bucket.add(PostEntry(postId, extractDate(post), extractContent(post), extractRoute(post)))
                 }
             }
             KojikeLog.info("recordPosts: user=$username, bucketTotal=${stat.totalPosts}, topics=${stat.topicCounts.size}")
