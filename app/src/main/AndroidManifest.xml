@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ImPad 式无 UI 模块：无 launcher activity，装上即在 LSPosed 中生效 -->
+    <application
+        android:allowBackup="false"
+        android:label="KojikeStats" />
+
+</manifest>

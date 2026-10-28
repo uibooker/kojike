@@ -1,0 +1,13 @@
+.fakehome/
+.gradle-home/
+.gradle/
+.jadxhome/
+.kotlin/
+.xdg-config/
+apk/
+app/build/
+build/
+jike-*.apk
+local.properties
+verification-*.png
+verification-final.png
