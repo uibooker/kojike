@@ -1,5 +1,6 @@
 package io.github.booker.kojike.ui
 
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -15,6 +16,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Space
 import android.widget.TextView
 import io.github.booker.kojike.KojikeLog
 import io.github.booker.kojike.stats.FetchEngine
@@ -57,7 +59,7 @@ class KojikeStatsPage(private val context: Context) {
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(primary)
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(10), dp(16), dp(10))
+            setPadding(dp(24), dp(10), dp(8), dp(10))
         }
         header.addView(
             title,
@@ -67,11 +69,12 @@ class KojikeStatsPage(private val context: Context) {
                 Gravity.START or Gravity.CENTER_VERTICAL
             )
         )
+        // header 右侧动作区：刷新（层级相关）+ 全量统计（仅一级有意义）
         val refresh = TextView(context).apply {
             text = "刷新"
             textSize = 13f
             setTextColor(secondary)
-            setPadding(dp(20), dp(12), dp(24), dp(12))
+            setPadding(dp(16), dp(12), dp(24), dp(12))
         }
         header.addView(
             refresh,
@@ -81,6 +84,41 @@ class KojikeStatsPage(private val context: Context) {
                 Gravity.END or Gravity.CENTER_VERTICAL
             )
         )
+        val fetchButton = TextView(context).apply {
+            text = "全量统计"
+            textSize = 13f
+            setTextColor(JIKE_BLUE)
+            setTypeface(typeface, Typeface.BOLD)
+            setBackgroundDrawable(
+                GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(tagBgColor())
+                }
+            )
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+        }
+        header.addView(
+            fetchButton,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL
+            ).apply { marginEnd = dp(64) }
+        )
+        val fetchStatusInline = TextView(context).apply {
+            textSize = 12f
+            setTextColor(secondary)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        header.addView(
+            fetchStatusInline,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL
+            ).apply { marginEnd = dp(64) }
+        )
         root.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val body = FrameLayout(context)
         root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -89,6 +127,7 @@ class KojikeStatsPage(private val context: Context) {
         this.refreshView = refresh
 
         refresh.setOnClickListener { showTopics() } // 二级时 body.tag 已变，showTopics 会复位文案
+        fetchButton.setOnClickListener { startFetch(fetchStatusInline, fetchButton) }
         showTopics()
         return root
     }
@@ -120,20 +159,35 @@ class KojikeStatsPage(private val context: Context) {
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             )
         } else {
-            list.addView(
+            val summaryRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(24), dp(8), dp(16), dp(8))
+            }
+            summaryRow.addView(
                 TextView(context).apply {
-                    text = "共 $total 条动态 · ${TopicStatsStore.topicCount(username)} 个圈子（点击圈子看明细）"
+                    text = "共 $total 条动态 · ${TopicStatsStore.topicCount(username)} 个圈子（点击看明细）"
                     textSize = 12f
                     setTextColor(secondary)
-                    setPadding(dp(24), dp(8), dp(16), dp(8))
                 },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
+            // 行内「清空」文字按钮：点击弹确认窗
+            summaryRow.addView(
+                TextView(context).apply {
+                    text = "清空"
+                    textSize = 12f
+                    setTextColor(0xFFE53935.toInt())
+                    setPadding(dp(8), dp(4), dp(4), dp(4))
+                    setOnClickListener { confirmClear() }
+                }
+            )
+            list.addView(summaryRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             topics.forEach { (name, count) ->
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(24), dp(7), dp(16), dp(7))
+                    setPadding(dp(24), dp(7), dp(24), dp(7))
                     isClickable = true
                     setRipple()
                 }
@@ -177,7 +231,9 @@ class KojikeStatsPage(private val context: Context) {
                     }
                 )
                 row.addView(tag, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                // 计数徽章：tag 同色系小胶囊，数字突出、弱化文字
+                // 计数徽章：tag 同色系小胶囊，数字突出、弱化文字，固定最右侧
+                val spacer = Space(context)
+                row.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
                 val countBadge = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -201,17 +257,13 @@ class KojikeStatsPage(private val context: Context) {
                             text = "条 ›"
                             textSize = 11f
                             setTextColor(secondary)
-                            (layoutParams as? LinearLayout.LayoutParams)?.marginStart = dp(2)
                         },
                         LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             marginStart = dp(2)
                         }
                     )
                 }
-                row.addView(countBadge, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                    marginStart = dp(10)
-                })
+                row.addView(countBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 row.setOnClickListener {
                     try {
                         showPosts(name)
@@ -222,46 +274,7 @@ class KojikeStatsPage(private val context: Context) {
                 }
                 list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
-            list.addView(
-                Button(context).apply {
-                    text = "清空该用户统计"
-                    setOnClickListener {
-                        TopicStatsStore.clear(TopicStatsStore.lastProfileUsername)
-                        showTopics()
-                    }
-                },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(dp(16), dp(16), dp(16), dp(16))
-                }
-            )
         }
-        // 全量统计：手动触发自动翻页（风险评审结论——不用冷启动自动抓）
-        val fetchStatus = TextView(context).apply {
-            textSize = 13f
-            setTextColor(secondary)
-            setPadding(dp(16), dp(4), dp(16), dp(4))
-        }
-        list.addView(
-            Button(context).apply {
-                text = "全量统计（抓取该用户全部动态）"
-                setOnClickListener {
-                    val username = TopicStatsStore.lastProfileUsername
-                    if (username.isNullOrEmpty()) {
-                        fetchStatus.text = "还没有已知的用户"
-                        return@setOnClickListener
-                    }
-                    FetchEngine.start(context.classLoader)
-                    pollProgress(fetchStatus, this)
-                }
-            },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(16), dp(8), dp(16), 0)
-            }
-        )
-        list.addView(
-            fetchStatus,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
         body.addView(
             ScrollView(context).apply {
                 addView(list)
@@ -273,16 +286,41 @@ class KojikeStatsPage(private val context: Context) {
         )
     }
 
-    /** 轮询抓取进度，主线程刷新状态行；结束后重载列表展示新数据。 */
-    private fun pollProgress(statusView: TextView, button: Button) {
+    /** 清空确认弹窗（防误触）。 */
+    private fun confirmClear() {
+        runCatching {
+            val activity = context as? android.app.Activity ?: return
+            AlertDialog.Builder(activity)
+                .setTitle("清空统计")
+                .setMessage("确定清空当前用户的全部圈子统计吗？此操作不可撤销。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("清空") { _, _ ->
+                    TopicStatsStore.clear(TopicStatsStore.lastProfileUsername)
+                    showTopics()
+                }
+                .show()
+        }.onFailure { error ->
+            if (error is VirtualMachineError || error is ThreadDeath) throw error
+            KojikeLog.error("confirm clear failed", error)
+        }
+    }
+
+    /** 全量统计触发 + header 行内进度展示。 */
+    private fun startFetch(statusView: TextView, button: TextView) {
+        val username = TopicStatsStore.lastProfileUsername
+        if (username.isNullOrEmpty()) {
+            statusView.text = "无用户"
+            return
+        }
+        FetchEngine.start(context.classLoader)
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val tick = object : Runnable {
             override fun run() {
                 val p = FetchEngine.progress
                 statusView.text = when {
                     p.error != null -> p.error
-                    p.running -> "抓取中：第 ${p.page} 页，已获取 ${p.fetched} 条…"
-                    p.done -> "全量完成：共 ${p.page} 页 · ${p.fetched} 条"
+                    p.running -> "${p.fetched} 条…"
+                    p.done -> "✓${p.fetched}条"
                     else -> ""
                 }
                 button.isEnabled = !p.running
