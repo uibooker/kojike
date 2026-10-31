@@ -15,6 +15,7 @@ import android.widget.TextView
 import io.github.booker.kojike.KojikeLog
 import io.github.booker.kojike.stats.TopicStatsStore
 import io.github.booker.kojike.ui.KojikeStatsPage
+import java.lang.ref.WeakReference
 import io.github.libxposed.api.XposedInterface
 
 /**
@@ -44,6 +45,13 @@ object ProfileUiHook {
 
     @Volatile
     private var realTabInserted = false
+
+    @Volatile
+    private var statsPageRef: WeakReference<KojikeStatsPage>? = null
+
+    /** 是否统计 tab 的标题（tv_tab_title 且文本为「统计」）。 */
+    private fun isStatsTabTitle(view: TextView): Boolean =
+        view.text == TAB_TITLE
 
     fun install(xposed: XposedInterface, loader: ClassLoader) {
         val basePresenter = try {
@@ -100,9 +108,38 @@ object ProfileUiHook {
                     if (fragment != null && isMarkedStatsPage(fragment)) {
                         val inflater = chain.args.getOrNull(0) as? LayoutInflater
                             ?: return@intercept chain.proceed()
-                        return@intercept KojikeStatsPage(inflater.context).build()
+                        val page = KojikeStatsPage(inflater.context)
+                        statsPageRef = WeakReference(page)
+                        return@intercept page.build()
                     }
                     chain.proceed()
+                }
+        }
+
+        // 统计 tab 被选中时重载页面内容：页面视图被 ViewPager 缓存，数据后到
+        // （首屏竞态/清空后再积累）不会自动出现，造成「有数据但滑不动」的空态
+        runCatching {
+            val setSelected = loader.loadClass("android.widget.TextView")
+                .getDeclaredMethod("setSelected", Boolean::class.javaPrimitiveType)
+            xposed.hook(setSelected)
+                .setId("kojike_stats_tab_selected")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    try {
+                        val view = chain.thisObject as? TextView
+                        val selected = chain.args.getOrNull(0) as? Boolean ?: false
+                        if (view != null && selected && view.tag == null &&
+                            view.id != View.NO_ID && isStatsTabTitle(view)
+                        ) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                runCatching { statsPageRef?.get()?.refreshTopLevel() }
+                            }
+                        }
+                    } catch (error: Throwable) {
+                        if (error is VirtualMachineError || error is ThreadDeath) throw error
+                    }
+                    result
                 }
         }
 

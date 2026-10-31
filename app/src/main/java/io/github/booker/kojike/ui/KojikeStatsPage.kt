@@ -30,18 +30,33 @@ import io.github.booker.kojike.stats.TopicStatsStore
  */
 class KojikeStatsPage(private val context: Context) {
 
-    private companion object {
-        // 宿主色板：tint_jikeBlue=#03A9F4、tag 底 bg_on_body_2=#F0F3F5（反编译取值）
-        val JIKE_BLUE: Int = 0xFF03A9F4.toInt()
-        val TAG_BG_FALLBACK: Int = 0xFFF0F3F5.toInt()
-        // 层级标记：挂在 body.tag 上供右上角动作判断
-        const val LEVEL_TOPICS = "topics"
-        const val LEVEL_POSTS = "posts"
-    }
-
     private var body: FrameLayout? = null
     private var titleView: TextView? = null
     private var refreshView: TextView? = null
+
+    companion object {
+        // 宿主色板：tint_jikeBlue=#03A9F4、tag 底 bg_on_body_2=#F0F3F5（反编译取值）
+        private val JIKE_BLUE: Int = 0xFF03A9F4.toInt()
+        private val TAG_BG_FALLBACK: Int = 0xFFF0F3F5.toInt()
+        // 层级标记：挂在 body.tag 上供右上角动作判断
+        private const val LEVEL_TOPICS = "topics"
+        private const val LEVEL_POSTS = "posts"
+
+        /** 当前活跃的统计页实例（宿主持有的壳在 onCreateView 时创建），供数据到达/tab 选中时刷新。 */
+        @Volatile
+        var active: KojikeStatsPage? = null
+            private set
+    }
+
+    /** 数据管道有新解析结果：若统计 tab 正在前台一级页，实时重载列表。 */
+    fun notifyDataChanged() {
+        if (body?.tag == LEVEL_TOPICS) showTopics()
+    }
+
+    /** tab 被选中：重载列表（首屏竞态——页面视图被 ViewPager 缓存，数据后到不会自动出现）。 */
+    fun refreshTopLevel() {
+        if (body?.tag == LEVEL_TOPICS) showTopics()
+    }
 
     fun build(): View {
         val primary = themeColor(android.R.attr.textColorPrimary, Color.BLACK)
@@ -125,6 +140,7 @@ class KojikeStatsPage(private val context: Context) {
         this.body = body
         this.titleView = title
         this.refreshView = refresh
+        active = this
 
         refresh.setOnClickListener { showTopics() } // 二级时 body.tag 已变，showTopics 会复位文案
         fetchButton.setOnClickListener { startFetch(fetchStatusInline, fetchButton) }
@@ -276,14 +292,32 @@ class KojikeStatsPage(private val context: Context) {
             }
         }
         body.addView(
-            ScrollView(context).apply {
-                addView(list)
-                // ScrollView 默认不参与嵌套滚动：个人页外层是 AppBar 联动布局，
-                // 不开启的话上滚手势会被外层吞掉，列表回不到顶部
-                isNestedScrollingEnabled = true
-            },
+            makeScrollView(context).apply { addView(list) },
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
+    }
+
+    /**
+     * 一级/二级共用的滚动容器：优先反射实例化宿主的 androidx NestedScrollView。
+     * 个人页外层是 AppBar 联动布局，framework ScrollView 的嵌套滚动适配不了它
+     * （首次进入后滑动被外层吞掉），NestedScrollView 是宿主自家滚动容器的同款实现。
+     */
+    private fun makeScrollView(ctx: Context): ViewGroup {
+        val nested = runCatching {
+            val clazz = ctx.classLoader.loadClass("androidx.core.widget.NestedScrollView")
+            val ctor = clazz.getConstructor(
+                android.content.Context::class.java,
+                android.util.AttributeSet::class.java,
+                Int::class.javaPrimitiveType
+            )
+            ctor.newInstance(ctx, null, 0) as ViewGroup
+        }.getOrNull()
+        if (nested != null) {
+            KojikeLog.info("stats page scroll: NestedScrollView(host)")
+            return nested
+        }
+        KojikeLog.warn("stats page scroll: fallback framework ScrollView")
+        return ScrollView(ctx).apply { isNestedScrollingEnabled = true }
     }
 
     /** 清空确认弹窗（防误触）。自绘圆角卡片样式；dismiss 后把焦点还回列表，否则滑动失效。 */
@@ -481,10 +515,7 @@ class KojikeStatsPage(private val context: Context) {
             )
         }
         body.addView(
-            ScrollView(context).apply {
-                addView(list)
-                isNestedScrollingEnabled = true
-            },
+            makeScrollView(context).apply { addView(list) },
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
     }
@@ -548,3 +579,4 @@ class KojikeStatsPage(private val context: Context) {
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density + 0.5f).toInt()
 }
+

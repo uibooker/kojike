@@ -2,6 +2,7 @@ package io.github.booker.kojike.hooks
 
 import io.github.booker.kojike.KojikeLog
 import io.github.booker.kojike.stats.TopicStatsStore
+import io.github.booker.kojike.ui.KojikeStatsPage
 import io.github.libxposed.api.XposedInterface
 import java.io.Reader
 
@@ -64,6 +65,10 @@ object GsonResponseHook {
         val username = usernames.first()
         TopicStatsStore.setLastProfileUsername(username)
         TopicStatsStore.recordPosts(username, data)
+        // 统计 tab 正在前台时让页面实时刷新（主线程）
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching { KojikeStatsPage.active?.notifyDataChanged() }
+        }
         KojikeLog.info("personalUpdate/single parsed: user=$username, items=${data.size}")
     }
 }
