@@ -1,7 +1,6 @@
 package io.github.booker.kojike.hooks
 
 import io.github.booker.kojike.KojikeLog
-import io.github.booker.kojike.stats.CurrentUser
 import io.github.booker.kojike.stats.TopicStatsStore
 import io.github.booker.kojike.ui.KojikeStatsPage
 import io.github.libxposed.api.XposedInterface
@@ -64,17 +63,8 @@ object GsonResponseHook {
             .toList()
         if (usernames.size != 1) return
         val username = usernames.first()
-        // 只统计当前登录用户：浏览他人主页（/personalUpdate/single 同样返回单作者页）
-        // 不记入统计，也不更新 lastProfileUsername
-        val me = CurrentUser.username()
-        if (me == null) {
-            KojikeLog.warn("current user unknown, page skipped (user=$username)")
-            return
-        }
-        if (username != me) {
-            KojikeLog.info("skip other-user page: $username (me=$me)")
-            return
-        }
+        // 按浏览的 profile 属主分桶：看谁的主页就统计谁（发现页等混合 feed 已被单作者
+        // 判别挡掉）。CurrentUser 保留用于区分自己/他人（全量统计等人机风控判断用）
         TopicStatsStore.setLastProfileUsername(username)
         TopicStatsStore.recordPosts(username, data)
         // 统计 tab 正在前台时让页面实时刷新（主线程）
