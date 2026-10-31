@@ -67,38 +67,20 @@ class KojikeStatsPage(private val context: Context) {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(background)
         }
-        val header = FrameLayout(context)
+        // header（横向排列互不重叠）：标题 | 全量统计 | 进度 | 刷新
         val title = TextView(context).apply {
             text = "统计"
             textSize = 16f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(primary)
-            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(24), dp(10), dp(8), dp(10))
         }
-        header.addView(
-            title,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.START or Gravity.CENTER_VERTICAL
-            )
-        )
-        // header 右侧动作区：刷新（层级相关）+ 全量统计（仅一级有意义）
         val refresh = TextView(context).apply {
             text = "刷新"
             textSize = 13f
             setTextColor(secondary)
             setPadding(dp(16), dp(12), dp(24), dp(12))
         }
-        header.addView(
-            refresh,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END or Gravity.CENTER_VERTICAL
-            )
-        )
         val fetchButton = TextView(context).apply {
             text = "全量统计"
             textSize = 13f
@@ -112,28 +94,30 @@ class KojikeStatsPage(private val context: Context) {
             )
             setPadding(dp(12), dp(6), dp(12), dp(6))
         }
-        header.addView(
-            fetchButton,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply { marginEnd = dp(64) }
-        )
         val fetchStatusInline = TextView(context).apply {
             textSize = 12f
             setTextColor(secondary)
             maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE // 空态不占位
+        }
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(
-            fetchStatusInline,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply { marginEnd = dp(64) }
+            title,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
+        header.addView(fetchStatusInline, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginEnd = dp(8)
+        })
+        header.addView(
+            fetchButton,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(8)
+            }
+        )
+        header.addView(refresh, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val body = FrameLayout(context)
         root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -412,6 +396,7 @@ class KojikeStatsPage(private val context: Context) {
     private fun startFetch(statusView: TextView, button: TextView) {
         val username = TopicStatsStore.lastProfileUsername
         if (username.isNullOrEmpty()) {
+            statusView.visibility = View.VISIBLE
             statusView.text = "无用户"
             return
         }
@@ -420,11 +405,17 @@ class KojikeStatsPage(private val context: Context) {
         val tick = object : Runnable {
             override fun run() {
                 val p = FetchEngine.progress
-                statusView.text = when {
+                val text = when {
                     p.error != null -> p.error
                     p.running -> "${p.fetched} 条…"
                     p.done -> "✓${p.fetched}条"
-                    else -> ""
+                    else -> null
+                }
+                if (text == null) {
+                    statusView.visibility = View.GONE
+                } else {
+                    statusView.visibility = View.VISIBLE
+                    statusView.text = text
                 }
                 button.isEnabled = !p.running
                 button.alpha = if (p.running) 0.5f else 1f
