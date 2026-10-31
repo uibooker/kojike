@@ -183,6 +183,18 @@ class KojikeStatsPage(private val context: Context) {
                 }
             )
             list.addView(summaryRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // 抓取失败时在此处短暂展示原因（成功不提示，总数自会更新）
+            FetchEngine.progress.error?.let { err ->
+                list.addView(
+                    TextView(context).apply {
+                        text = err
+                        textSize = 12f
+                        setTextColor(0xFFE53935.toInt())
+                        setPadding(dp(24), dp(4), dp(16), dp(4))
+                    },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                )
+            }
             topics.forEach { (name, count) ->
                 val row = LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -405,23 +417,17 @@ class KojikeStatsPage(private val context: Context) {
         val tick = object : Runnable {
             override fun run() {
                 val p = FetchEngine.progress
-                val text = when {
-                    p.error != null -> p.error
-                    p.running -> "${p.fetched} 条…"
-                    p.done -> "✓${p.fetched}条"
-                    else -> null
-                }
-                if (text == null) {
-                    statusView.visibility = View.GONE
-                } else {
-                    statusView.visibility = View.VISIBLE
-                    statusView.text = text
-                }
-                button.isEnabled = !p.running
-                button.alpha = if (p.running) 0.5f else 1f
                 if (p.running) {
+                    // 仅抓取中展示进度；完成/失败都隐藏（总数看下方汇总行）
+                    statusView.visibility = View.VISIBLE
+                    statusView.text = "${p.fetched} 条…"
+                    button.isEnabled = false
+                    button.alpha = 0.5f
                     handler.postDelayed(this, 500)
                 } else {
+                    statusView.visibility = View.GONE
+                    button.isEnabled = true
+                    button.alpha = 1f
                     showTopics() // 结束（成功或失败）都重载列表展示新数据
                 }
             }
