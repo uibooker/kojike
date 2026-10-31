@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.2.0
+// @version      0.3.0
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -253,6 +253,75 @@
       <div style="padding:0 4px">${legend}</div></div>`;
   }
 
+  // ---------- 全量抓取（平移 App 版 FetchEngine 策略） ----------
+  // 手动触发；loadMoreKey 游标翻页；限速 + 退避 + 硬上限，fail-closed
+  const fetchState = { running: false, user: null, fetched: 0, error: null };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function fetchAll(user) {
+    if (fetchState.running) return;
+    fetchState.running = true;
+    fetchState.user = user;
+    fetchState.fetched = 0;
+    fetchState.error = null;
+    let consecutiveFailures = 0;
+
+    try {
+      let loadMoreKey;
+      for (let page = 0; page < 600; page++) {
+        // 离开该用户主页（SPA 路由变化）即中止
+        if (profileUsername() !== user) throw new Error('已离开该用户主页，抓取中止');
+        const headers = { 'content-type': 'application/json', platform: 'web' };
+        const token = localStorage.getItem('JK_ACCESS_TOKEN');
+        if (token) headers['x-jike-access-token'] = token;
+        const deviceId = localStorage.getItem('JK_DEVICE_ID');
+        if (deviceId) headers['x-jike-device-id'] = deviceId;
+
+        let res, json;
+        try {
+          res = await fetch(`https://${API_HOST}${ENDPOINT}`, {
+            method: 'POST',
+            headers,
+            // 服务端单页上限 25（实测 limit>25 也只返回 25），与 App 版 FetchEngine 一致
+            body: JSON.stringify({ limit: 25, loadMoreKey, username: user }),
+          });
+          if (res.status === 429 || res.status === 403) throw new Error(`HTTP ${res.status}，触发限流，已中止`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          json = await res.json();
+          consecutiveFailures = 0;
+        } catch (e) {
+          if (++consecutiveFailures >= 3) throw e;
+          await sleep(2000 * consecutiveFailures); // 退避后重试当前页
+          page--;
+          continue;
+        }
+
+        const db = loadDb();
+        const stored = Object.keys(db[user]?.byId || {}).length;
+        if (stored >= MAX_POSTS_PER_USER) {
+          fetchState.error = `已达单用户 ${MAX_POSTS_PER_USER} 条入库上限，更早的动态未入库`;
+          break;
+        }
+        recordPage(json.data || [], user);
+        fetchState.fetched += (json.data || []).length;
+        notifyChange(user);
+        renderPanelProgress();
+
+        if (!json.loadMoreKey) break; // 游标到底
+        loadMoreKey = json.loadMoreKey;
+        await sleep(400 + Math.random() * 400);
+      }
+    } catch (e) {
+      fetchState.error = String(e?.message || e);
+    } finally {
+      fetchState.running = false;
+      if (profileUsername() === fetchState.user) {
+        notifyChange(fetchState.user);
+        renderPanel();
+      }
+    }
+  }
+
   function renderChip() {
     const user = profileUsername();
     if (!user) { uiRoot?.remove(); uiRoot = null; viewingUser = null; return; }
@@ -321,11 +390,19 @@
             <span style="color:${JIKE_BLUE};font-weight:700">${t.count}</span><span style="color:#bbb">条 ›</span>
           </div>`).join('')
         : `<div style="padding:24px 16px;text-align:center;color:#999">暂无数据，先上下滚动加载动态</div>`;
+      if (fetchState.error) {
+        bodyHtml += `<div style="padding:6px 16px 10px;color:#e5484d;font-size:12px">✕ ${esc(fetchState.error)}</div>`;
+      }
+      bodyHtml += `<div style="border-top:1px solid #f2f2f2;padding:8px 16px;color:#bbb;font-size:11px">
+        统计范围 = 已加载/已抓取的动态；「全量」自动翻页抓取该用户全部动态（限速约 1-2 条/秒）</div>`;
     }
 
+    const fetching = fetchState.running && fetchState.user === viewingUser;
     panel.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #f2f2f2">
         <b id="kojike-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:${panelView.mode !== 'topics' ? 'pointer' : 'default'}">${esc(title)}</b>
+        ${panelView.mode === 'topics' ? `<span id="kojike-progress" style="color:#999;font-size:12px;white-space:nowrap">${fetching ? `${fetchState.fetched} 条…` : ''}</span>` : ''}
+        ${panelView.mode === 'topics' && !fetching ? `<span id="kojike-fetchall" style="color:${JIKE_BLUE};font-weight:600;cursor:pointer;white-space:nowrap">全量</span>` : ''}
         ${panelView.mode === 'topics' && topics.length ? `<span id="kojike-chart" title="图表统计" style="cursor:pointer">📈</span>` : ''}
         <span id="kojike-clear" style="color:#e5484d;cursor:pointer">清空</span>
         <span id="kojike-close" style="color:#999;cursor:pointer;padding:0 4px">✕</span>
@@ -333,6 +410,7 @@
     panel.querySelector('#kojike-close').onclick = () => { panelOpen = false; panelView = { mode: 'topics' }; renderPanel(); };
     panel.querySelector('#kojike-chart')?.addEventListener('click', () => { panelView = { mode: 'chart' }; renderPanel(); });
     panel.querySelector('#kojike-chart-type')?.addEventListener('change', (e) => { setChartType(e.target.value); renderPanel(); });
+    panel.querySelector('#kojike-fetchall')?.addEventListener('click', () => { fetchAll(viewingUser); renderPanel(); });
     panel.querySelector('#kojike-clear').onclick = () => {
       const db = loadDb();
       delete db[viewingUser];
@@ -374,6 +452,13 @@
   const notifyChange = (user) => {
     if (user === profileUsername()) renderChip();
   };
+
+  // 抓取中的进度只更新行内文字，不整面板重绘（避免打断用户滚动列表）
+  function renderPanelProgress() {
+    if (!panelOpen) return;
+    const el = document.getElementById('kojike-progress');
+    if (el && fetchState.running) el.textContent = `${fetchState.fetched} 条…`;
+  }
 
   // SPA 路由变化 + 数据到达都要重渲染（对应 App 版两处自动刷新）
   let lastPath = location.pathname;
