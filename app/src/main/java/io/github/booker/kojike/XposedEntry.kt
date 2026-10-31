@@ -37,6 +37,8 @@ class XposedEntry : XposedModule() {
         try {
             // 宿主无壳，默认 classloader 直接可加载 gson / androidx / 业务模型，无需等待
             val loader = param.defaultClassLoader
+            // 登录用户识别需要宿主 dataDir（读 account_v2.json）
+            io.github.booker.kojike.stats.CurrentUser.dataDir = param.applicationInfo.dataDir
             // 两组 hook 相互独立，一组失败不影响另一组
             try {
                 GsonResponseHook.install(this, loader)
