@@ -42,6 +42,7 @@
 - [x] SPA 路由切换 chip/面板自动跟随；非个人页 chip 隐藏
 - [x] 图表视图（饼/柱/折线下拉切换，手写 SVG 零依赖）：渲染、切换记忆、点击下钻均实测通过
 - [x] 全量抓取：实测 3000 条（触库上限即停）、限速正常、SPA 中止正常、错误提示正常
+- [x] 样式对齐宿主（v0.4）：圈子行 TopicTagLayout 同款胶囊 + 蓝点 + 计数徽章，「无圈子」灰蓝圆标
 - [ ] 正式 Chrome + Tampermonkey 人工复验
 
 ## 与 App 版的对应
@@ -51,5 +52,6 @@
 | hook `Gson.fromJson` 拦响应 | wrap `XMLHttpRequest`（axios 默认 adapter），fetch 兜底 |
 | `TopicStatsStore` 内存分桶 | localStorage 分桶（跨会话持久化，LRU 30 用户） |
 | 真 tab 插页 / 悬浮 chip 降级 | 悬浮 chip + 浮层面板 |
+| 宿主 TopicTagLayout 胶囊样式 | 同款 CSS 胶囊（灰底/蓝点/蓝字/徽章，无圈子灰蓝圆标）|
 | `FetchEngine` 反射复用宿主网络栈全量抓取 | 直接 fetch 同源 API + 同款限速/退避/fail-closed |
 | 进程存活期数据 | localStorage 持久化 |
