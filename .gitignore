@@ -12,3 +12,4 @@ local.properties
 verification-*.png
 verification-final.png
 web/recon/
+web/extension/*.zip
