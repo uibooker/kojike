@@ -1,6 +1,11 @@
-# kojike web —— 即刻网页版圈子统计（油猴脚本）
+# kojike web —— 即刻网页版圈子统计
 
 在 [web.okjike.com](https://web.okjike.com) 个人页统计「当前浏览的用户在哪些圈子发过动态、各发了多少条」。与 App 版 LSPosed 模块（`app/`）同一需求、同一套统计口径，网页端形态。
+
+**两个发行版，同一套逻辑**（油猴脚本是单一事实来源，扩展由它构建）：
+
+- **油猴脚本** `jike-circle-stats.user.js` —— 装过 Tampermonkey 的用户
+- **Chrome 扩展** `extension/` —— 没装油猴的用户，MV3 MAIN world，见 `extension/README.md`
 
 ## 安装（自己的 Chrome）
 
@@ -29,7 +34,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| `jike-circle-stats.user.js` | 脚本本体（v0.1.0，约 250 行） |
+| `jike-circle-stats.user.js` | 脚本本体（单一事实来源，统计/图表/抓取逻辑只在这里维护） |
+| `extension/` | Chrome 扩展版（MV3，`build.mjs` 从油猴脚本生成，见 `extension/README.md`） |
 | `RECON.md` | 网页端侦察笔记：端点、鉴权、路由、响应模型、实机验证结论 |
 | `recon/` | 侦察工作区（bundle 快照、CDP 助手 `cdp.mjs`、隔离 Chrome profile），已 gitignore |
 
@@ -43,6 +49,7 @@
 - [x] 图表视图（饼/柱/折线下拉切换，手写 SVG 零依赖）：渲染、切换记忆、点击下钻均实测通过
 - [x] 全量抓取：实测 3000 条（触库上限即停）、限速正常、SPA 中止正常、错误提示正常
 - [x] 样式对齐宿主（v0.4）：圈子行 TopicTagLayout 同款胶囊 + 蓝点 + 计数徽章，「无圈子」灰蓝圆标
+- [x] Chrome 扩展版（v0.4.0）：Chrome for Testing 156 实测 MAIN world 注入、滚动捕获、面板、图表全通
 - [ ] 正式 Chrome + Tampermonkey 人工复验
 
 ## 与 App 版的对应

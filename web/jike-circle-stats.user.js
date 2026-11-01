@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.4.0
+// @version      0.5.0
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -271,6 +271,93 @@
       <div style="padding:0 4px">${legend}</div></div>`;
   }
 
+  // ---------- 年度统计 ----------
+  // 年份视图是时间维度的图表：汇总行给覆盖跨度，堆叠柱画每年总量与 top 圈子占比，点柱下钻该年明细
+  function yearBuckets(topics) {
+    const byYear = new Map(); // 'YYYY' -> { total, byTopic: Map<name, count> }
+    let noDate = 0;
+    for (const t of topics) {
+      for (const p of t.posts) {
+        const y = (p.date || '').slice(0, 4);
+        if (!/^\d{4}$/.test(y)) { noDate++; continue }
+        const o = byYear.get(y) || { total: 0, byTopic: new Map() };
+        o.total++;
+        o.byTopic.set(t.name, (o.byTopic.get(t.name) || 0) + 1);
+        byYear.set(y, o);
+      }
+    }
+    return { years: [...byYear.entries()].sort(([a], [b]) => a.localeCompare(b)), noDate };
+  }
+
+  function yearStackSvg(topics) {
+    const { years, noDate } = yearBuckets(topics);
+    if (!years.length) return `<div style="padding:24px 16px;text-align:center;color:#999">动态缺少日期信息，无法做年度统计</div>`;
+    const top4 = topics.slice(0, 4).map((t) => t.name);
+    const W = 328, H = 190, pl = 30, pr = 10, pt = 12, pb = 22;
+    const maxY = Math.max(...years.map(([, o]) => o.total), 1);
+    const bw = Math.min(46, (W - pl - pr) / years.length * 0.62);
+    const x = (i) => pl + (i + 0.5) * (W - pl - pr) / years.length;
+    const y = (v) => pt + (1 - v / maxY) * (H - pt - pb);
+    const grid = [0, Math.round(maxY / 2), maxY].map((v) =>
+      `<line x1="${pl}" y1="${y(v).toFixed(1)}" x2="${W - pr}" y2="${y(v).toFixed(1)}" stroke="#eef0f2"/>
+       <text x="${pl - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${v}</text>`).join('');
+    const bars = years.map(([yr, o], i) => {
+      const colorOf = (name) => (name === NO_TOPIC ? NO_TOPIC_COLOR : PALETTE[top4.indexOf(name) % PALETTE.length]);
+      // 堆叠顺序：top 圈子按 palette，其余圈子合并为灰段，最上叠「无圈子」
+      const segs = [];
+      let rest = o.total;
+      for (const name of top4) {
+        const c = o.byTopic.get(name) || 0;
+        if (!c) continue;
+        segs.push({ name, count: c, color: colorOf(name) });
+        rest -= c;
+      }
+      const noTopic = o.byTopic.get(NO_TOPIC) || 0;
+      rest -= noTopic;
+      if (rest > 0) segs.push({ name: '其他圈子', count: rest, color: '#cfd8dc' });
+      if (noTopic) segs.push({ name: NO_TOPIC, count: noTopic, color: NO_TOPIC_COLOR });
+      let acc = 0;
+      const rects = segs.map((s) => {
+        const y0 = y(acc + s.count), h = Math.max(1.5, y(acc) - y(acc + s.count));
+        acc += s.count;
+        return `<rect class="kojike-yearbar" data-y="${yr}" x="${(x(i) - bw / 2).toFixed(1)}" y="${y0.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${s.color}"><title>${yr} · ${esc(s.name)} ${s.count}条</title></rect>`;
+      }).join('');
+      const label = `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#666">${yr.slice(2)}年</text>
+        <text x="${x(i).toFixed(1)}" y="${(y(o.total) - 4).toFixed(1)}" text-anchor="middle" font-size="9" fill="${JIKE_BLUE}" font-weight="600">${o.total}</text>`;
+      return rects + label;
+    }).join('');
+    const legend = [...top4.map((name) => ({ name, color: PALETTE[top4.indexOf(name) % PALETTE.length] })),
+      { name: '其他圈子', color: '#cfd8dc' }, { name: NO_TOPIC, color: NO_TOPIC_COLOR }]
+      .map(({ name, color }) => `<span style="display:inline-flex;align-items:center;gap:4px;margin:3px 8px 3px 0">
+        <i style="width:9px;height:9px;border-radius:2px;background:${color}"></i>
+        <span style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></span>`).join('');
+    const [firstY] = years[0], [lastY, lastO] = years[years.length - 1];
+    const earliest = topics.flatMap((t) => t.posts).map((p) => p.date || '').filter(Boolean).sort()[0] || '';
+    return `<div style="padding:8px 10px 4px">
+      <div style="color:#bbb;font-size:11px;padding:0 4px 4px">覆盖 ${firstY}~${lastY} 年 · 最早 ${esc(earliest.slice(0, 10))}${noDate ? ` · ${noDate} 条无日期` : ''} · 统计范围 = 已抓取动态</div>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${bars}</svg>
+      <div style="padding:2px 4px 0">${legend}</div></div>`;
+  }
+
+  function yearPostsView(topics, year) {
+    const posts = topics.flatMap((t) => t.posts)
+      .filter((p) => (p.date || '').startsWith(year))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    if (!posts.length) return { html: `<div style="padding:24px 16px;text-align:center;color:#999">${esc(year)} 年暂无明细</div>`, count: 0 };
+    const byTopic = new Map();
+    for (const p of posts) byTopic.set(p.topic, (byTopic.get(p.topic) || 0) + 1);
+    const summary = [...byTopic.entries()].sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, n]) => tagHtml(name).replace('max-width:250px', 'max-width:170px') + countHtml(n))
+      .join('');
+    const cards = posts.map((p) => `
+      <div class="kojike-post" data-id="${esc(p.id)}" data-type="${esc(p.type)}" style="margin:8px 12px;padding:10px 12px;background:#f7f8fa;border-radius:10px;cursor:pointer">
+        <div style="color:#999;font-size:11px;margin-bottom:3px">${esc((p.date || '').slice(0, 10) || '日期未知')} · ${esc(p.topic)}</div>
+        <div style="overflow:hidden">${esc(p.content || '〈无文字内容〉')}</div>
+      </div>`).join('');
+    return { html: `<div style="display:flex;flex-wrap:wrap;gap:6px 2px;padding:10px 16px 2px;border-bottom:1px solid #f5f5f5">${summary}</div>${cards}`, count: posts.length };
+  }
+
   // ---------- 全量抓取（平移 App 版 FetchEngine 策略） ----------
   // 手动触发；loadMoreKey 游标翻页；限速 + 退避 + 硬上限，fail-closed
   const fetchState = { running: false, user: null, fetched: 0, error: null };
@@ -377,14 +464,18 @@
 
     let bodyHtml;
     let title = `圈子统计 · 共 ${total} 条动态`;
-    if (panelView.mode === 'chart') {
+    if (panelView.mode === 'year') {
+      title = `📅 ${panelView.year} 年动态`;
+      const { html } = yearPostsView(topics, panelView.year);
+      bodyHtml = html;
+    } else if (panelView.mode === 'chart') {
       const type = chartType();
       title = '📈 图表统计';
-      const body = type === 'pie' ? pieSvg(topics) : type === 'bars' ? barsHtml(topics) : lineSvg(topics);
-      const opts = [['pie', '饼图'], ['bars', '柱状图'], ['line', '折线图']]
+      const body = type === 'pie' ? pieSvg(topics) : type === 'bars' ? barsHtml(topics) : type === 'years' ? yearStackSvg(topics) : lineSvg(topics);
+      const opts = [['pie', '饼图'], ['bars', '柱状图'], ['line', '折线图'], ['years', '按年']]
         .map(([v, label]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${label}</option>`).join('');
       bodyHtml = `<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 12px 0;color:#999;font-size:12px">
-          按圈子·条数
+          ${type === 'years' ? '按年份·堆叠' : '按圈子·条数'}
           <select id="kojike-chart-type" style="border:1px solid #e3e5e8;border-radius:8px;padding:3px 6px;font-size:12px;color:#333;background:#fff">${opts}</select>
         </div>${body}`;
     } else if (panelView.mode === 'posts') {
@@ -437,14 +528,26 @@
       panelView = { mode: 'topics' };
       renderPanel(); renderChip();
     };
-    if (panelView.mode === 'chart') {
-      // 饼图扇区/图例、柱状图行点击 → 该圈子明细（「其他」除外）
+    if (panelView.mode === 'year') {
+      // 年度明细：标题返回图表，卡片跳详情（与圈子明细同一套交互）
+      panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'chart' }; renderPanel(); };
+      panel.querySelectorAll('.kojike-post').forEach((el) => {
+        el.onclick = () => {
+          const route = detailRoute(el.dataset.type, el.dataset.id, viewingUser);
+          if (route) location.assign(route);
+        };
+      });
+    } else if (panelView.mode === 'chart') {
+      // 饼图扇区/图例、柱状图行点击 → 该圈子明细（「其他」除外）；年度柱点击 → 该年明细
       const openTopic = (i) => {
         const name = sliceData(topics, chartType() === 'bars' ? 10 : 8)[i]?.name;
         if (name && name !== '其他') { panelView = { mode: 'posts', topic: name }; renderPanel(); }
       };
       panel.querySelectorAll('.kojike-slice, .kojike-legend, .kojike-bar').forEach((el) => {
         el.onclick = () => openTopic(Number(el.dataset.i));
+      });
+      panel.querySelectorAll('.kojike-yearbar').forEach((el) => {
+        el.onclick = () => { panelView = { mode: 'year', year: el.dataset.y }; renderPanel(); };
       });
       panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'topics' }; renderPanel(); };
     } else if (panelView.mode === 'posts') {
