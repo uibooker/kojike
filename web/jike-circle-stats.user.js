@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.3.0
+// @version      0.4.0
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -17,6 +17,9 @@
   const MAX_USERS = 30;
   const MAX_POSTS_PER_USER = 3000;
   const JIKE_BLUE = '#03A9F4';
+  // 「无圈子」与 App 版一致用灰蓝圆标区分，避免和真圈子混淆
+  const NO_TOPIC = '无圈子';
+  const NO_TOPIC_COLOR = '#90A4AE';
 
   // ---------- 存储 ----------
   // db: { [username]: { byId: { [postId]: { type, topic, content, date } }, touched } }
@@ -65,7 +68,7 @@
       if (!p?.id || bucket.byId[p.id]) continue;
       if (Object.keys(bucket.byId).length >= MAX_POSTS_PER_USER) break;
       // 转发自身无 topic 时用被转发原动态的 topic 兜底归类（与 App 版一致）
-      const topic = p.topic?.content?.trim() || p.target?.topic?.content?.trim() || '无圈子';
+      const topic = p.topic?.content?.trim() || p.target?.topic?.content?.trim() || NO_TOPIC;
       bucket.byId[p.id] = {
         type: p.type || '',
         topic,
@@ -126,6 +129,21 @@
   let panelView = { mode: 'topics' };
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  // 宿主 TopicTagLayout 同款胶囊（App 版 commit 7fef776 反编译规格）：
+  // 灰底 bg_on_body_2 圆角 10dp + 16dp 即刻蓝圆形图标 + 蓝字；「无圈子」灰蓝圆标区分
+  const tagDotColor = (name) => (name === NO_TOPIC ? NO_TOPIC_COLOR : JIKE_BLUE);
+  const tagHtml = (name) => `
+    <span style="display:inline-flex;align-items:center;gap:5px;background:#f5f6f7;border-radius:10px;
+      padding:4px 10px 4px 5px;color:${JIKE_BLUE};font-weight:500;max-width:250px;overflow:hidden;flex:none">
+      <i style="width:14px;height:14px;border-radius:50%;background:${tagDotColor(name)};flex:none"></i>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
+    </span>`;
+  // 计数徽章：蓝色加粗数字 + 弱化「条›」，Space 占位固定最右（App 版 f674fad 布局调整）
+  const countHtml = (n) => `
+    <span style="margin-left:auto;white-space:nowrap;color:#bbb;flex:none">
+      <b style="color:${JIKE_BLUE};font-weight:700;font-size:14px">${n}</b> 条 ›
+    </span>`;
 
   const statsOf = (username) => {
     const bucket = loadDb()[username];
@@ -385,9 +403,9 @@
       // 注意 topics 数组必须 join('')，否则隐式 toString 会在行间插入逗号
       bodyHtml = topics.length
         ? topics.map((t, i) => `
-          <div class="kojike-topic" data-i="${i}" style="display:flex;align-items:center;gap:8px;padding:9px 16px;cursor:pointer;border-top:1px solid #f2f2f2">
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span>
-            <span style="color:${JIKE_BLUE};font-weight:700">${t.count}</span><span style="color:#bbb">条 ›</span>
+          <div class="kojike-topic" data-i="${i}" style="display:flex;align-items:center;gap:10px;padding:8px 16px 8px 24px;cursor:pointer;border-top:1px solid #f5f5f5">
+            ${tagHtml(t.name)}
+            ${countHtml(t.count)}
           </div>`).join('')
         : `<div style="padding:24px 16px;text-align:center;color:#999">暂无数据，先上下滚动加载动态</div>`;
       if (fetchState.error) {
