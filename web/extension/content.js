@@ -153,8 +153,20 @@
 
   // ---------- 图表（手写 SVG，不引库） ----------
   const CHART_LS_KEY = 'kojike_chart_type_v1';
-  const chartType = () => { try { return localStorage.getItem(CHART_LS_KEY) || 'pie' } catch { return 'pie' } };
+  const DIM_LS_KEY = 'kojike_chart_dim';
+  // 图表类型：仅「按圈子」维度下的饼/柱/折线；「按年」是独立的统计维度，不与图表类型混在同一下拉
+  const chartType = () => { try { const t = localStorage.getItem(CHART_LS_KEY); return ['pie', 'bars', 'line'].includes(t) ? t : 'pie' } catch { return 'pie' } };
   const setChartType = (t) => { try { localStorage.setItem(CHART_LS_KEY, t) } catch { /* 忽略 */ } };
+  // 统计维度：'topics'（按圈子）/ 'years'（按年）；兼容 v0.5.0 把「按年」存在图表类型里的旧选择
+  const dim = () => {
+    try {
+      const stored = localStorage.getItem(DIM_LS_KEY);
+      if (stored === 'years' || stored === 'topics') return stored;
+      if (localStorage.getItem(CHART_LS_KEY) === 'years') return 'years';
+      return 'topics';
+    } catch { return 'topics' }
+  };
+  const setDim = (d) => { try { localStorage.setItem(DIM_LS_KEY, d) } catch { /* 忽略 */ } };
   const PALETTE = ['#03A9F4', '#FF9800', '#8BC34A', '#E91E63', '#9C27B0', '#00BCD4', '#FFC107', '#795548'];
 
   // 饼图/柱状图只画 top N，其余合并为「其他」
@@ -461,13 +473,24 @@
       bodyHtml = html;
     } else if (panelView.mode === 'chart') {
       const type = chartType();
+      const d = dim();
       title = '📈 图表统计';
-      const body = type === 'pie' ? pieSvg(topics) : type === 'bars' ? barsHtml(topics) : type === 'years' ? yearStackSvg(topics) : lineSvg(topics);
-      const opts = [['pie', '饼图'], ['bars', '柱状图'], ['line', '折线图'], ['years', '按年']]
-        .map(([v, label]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${label}</option>`).join('');
-      bodyHtml = `<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 12px 0;color:#999;font-size:12px">
-          ${type === 'years' ? '按年份·堆叠' : '按圈子·条数'}
-          <select id="kojike-chart-type" style="border:1px solid #e3e5e8;border-radius:8px;padding:3px 6px;font-size:12px;color:#333;background:#fff">${opts}</select>
+      const body = d === 'years' ? yearStackSvg(topics) : type === 'pie' ? pieSvg(topics) : type === 'bars' ? barsHtml(topics) : lineSvg(topics);
+      const dimOpts = [['topics', '按圈子'], ['years', '按年']]
+        .map(([v, label]) => `<option value="${v}" ${d === v ? 'selected' : ''}>${label}</option>`).join('');
+      const dimSel = `<label style="display:inline-flex;align-items:center;gap:4px;color:#999;font-size:12px">统计维度
+          <select id="kojike-chart-dim" style="border:1px solid #e3e5e8;border-radius:8px;padding:3px 6px;font-size:12px;color:#333;background:#fff">${dimOpts}</select></label>`;
+      // 图表类型只属于「按圈子」维度；「按年」是堆叠柱，没有图表类型可选
+      const typeSel = d === 'topics'
+        ? (() => {
+            const opts = [['pie', '饼图'], ['bars', '柱状图'], ['line', '折线图']]
+              .map(([v, label]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${label}</option>`).join('');
+            return `<label style="display:inline-flex;align-items:center;gap:4px;color:#999;font-size:12px">图表
+              <select id="kojike-chart-type" style="border:1px solid #e3e5e8;border-radius:8px;padding:3px 6px;font-size:12px;color:#333;background:#fff">${opts}</select></label>`;
+          })()
+        : `<span style="color:#bbb;font-size:12px">按年份·堆叠</span>`;
+      bodyHtml = `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:8px 12px 0;color:#999;font-size:12px">
+          ${dimSel}${typeSel}
         </div>${body}`;
     } else if (panelView.mode === 'posts') {
       const t = topics.find((x) => x.name === panelView.topic);
@@ -509,6 +532,7 @@
       </div>${bodyHtml}`;
     panel.querySelector('#kojike-close').onclick = () => { panelOpen = false; panelView = { mode: 'topics' }; renderPanel(); };
     panel.querySelector('#kojike-chart')?.addEventListener('click', () => { panelView = { mode: 'chart' }; renderPanel(); });
+    panel.querySelector('#kojike-chart-dim')?.addEventListener('change', (e) => { setDim(e.target.value); renderPanel(); });
     panel.querySelector('#kojike-chart-type')?.addEventListener('change', (e) => { setChartType(e.target.value); renderPanel(); });
     panel.querySelector('#kojike-fetchall')?.addEventListener('click', () => { fetchAll(viewingUser); renderPanel(); });
     panel.querySelector('#kojike-clear').onclick = () => {
