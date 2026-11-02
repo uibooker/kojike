@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.6.0
+// @version      0.6.1
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -48,6 +48,18 @@
   const detailRoute = (type, id, username) => {
     const t = { ORIGINAL_POST: 'post', REPOST: 'repost', PERSONAL_UPDATE: 'post' }[type];
     return t ? `/u/${username}/${t}/${id}` : null;
+  };
+  // 详情返回后面板视图恢复键（sessionStorage：随标签页，不跨会话打扰）
+  const PANEL_RESUME_KEY = 'kojike_panel_resume';
+  // SPA 原生方式进详情：pushState + popstate 驱动宿主路由。
+  // 整页 location.assign 会让宿主在新文档里渲染「什么也找不到｜返回首页」，
+  // 且浏览器返回后 SPA 状态全丢；SPA 路由则 feed 保持在内存里，返回即回个人页原位。
+  const goDetail = (type, id) => {
+    const route = detailRoute(type, id, viewingUser);
+    if (!route) return;
+    try { sessionStorage.setItem(PANEL_RESUME_KEY, JSON.stringify({ view: panelView, user: viewingUser })) } catch { /* 忽略 */ }
+    history.pushState({}, '', route);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   // ---------- 统计核心（平移自 App 版 GsonResponseHook） ----------
@@ -595,10 +607,7 @@
       // 年度明细：标题返回图表，卡片跳详情；圈子胶囊下钻「该年 × 该圈子」
       panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'chart' }; renderPanel(); };
       panel.querySelectorAll('.kojike-post').forEach((el) => {
-        el.onclick = () => {
-          const route = detailRoute(el.dataset.type, el.dataset.id, viewingUser);
-          if (route) location.assign(route);
-        };
+        el.onclick = () => goDetail(el.dataset.type, el.dataset.id);
       });
       panel.querySelectorAll('.kojike-ytopic').forEach((el) => {
         el.onclick = () => { panelView = { mode: 'posts', topic: el.dataset.topic, year: panelView.year, back: { mode: 'year', year: panelView.year } }; renderPanel(); };
@@ -630,10 +639,7 @@
         };
       });
       panel.querySelectorAll('.kojike-post').forEach((el) => {
-        el.onclick = () => {
-          const route = detailRoute(el.dataset.type, el.dataset.id, viewingUser);
-          if (route) location.assign(route);
-        };
+        el.onclick = () => goDetail(el.dataset.type, el.dataset.id);
       });
     } else {
       panel.querySelectorAll('.kojike-topic').forEach((el) => {
@@ -669,7 +675,25 @@
   };
   wrapHistory('pushState');
   wrapHistory('replaceState');
-  addEventListener('popstate', () => { lastPath = location.pathname; panelOpen = false; renderPanel(); renderChip(); });
+  addEventListener('popstate', () => {
+    queueMicrotask(() => {
+      if (location.pathname === lastPath) return; // goDetail 自派的 popstate，pushState 包装器已处理
+      lastPath = location.pathname;
+      // 浏览器返回到个人页：恢复跳转详情前的统计面板视图，接着看
+      let resume = null;
+      try { resume = JSON.parse(sessionStorage.getItem(PANEL_RESUME_KEY) || 'null') } catch { /* 忽略 */ }
+      if (resume && resume.user && resume.user === profileUsername()) {
+        panelOpen = true;
+        panelView = resume.view || { mode: 'topics' };
+        try { sessionStorage.removeItem(PANEL_RESUME_KEY) } catch { /* 忽略 */ }
+      } else {
+        panelOpen = false;
+        panelView = { mode: 'topics' };
+      }
+      renderChip(); // 先刷新 viewingUser（详情页期间被置空），renderPanel 依赖它
+      renderPanel();
+    });
+  });
 
   // ---------- 启动 ----------
   armCapture();
