@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "即刻圈子统计",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条，支持饼图/柱状图/折线图与全量抓取",
   "content_scripts": [
     {

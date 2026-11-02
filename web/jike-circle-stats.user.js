@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.5.1
+// @version      0.6.0
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -360,7 +360,8 @@
     for (const p of posts) byTopic.set(p.topic, (byTopic.get(p.topic) || 0) + 1);
     const summary = [...byTopic.entries()].sort((a, b) => b[1] - a[1])
       .slice(0, 6)
-      .map(([name, n]) => tagHtml(name).replace('max-width:250px', 'max-width:170px') + countHtml(n))
+      // 胶囊可点击：下钻「该年 × 该圈子」交叉明细
+      .map(([name, n]) => `<span class="kojike-ytopic" data-topic="${esc(name)}" style="cursor:pointer">${tagHtml(name).replace('max-width:250px', 'max-width:170px')}${countHtml(n)}</span>`)
       .join('');
     const cards = posts.map((p) => `
       <div class="kojike-post" data-id="${esc(p.id)}" data-type="${esc(p.type)}" style="margin:8px 12px;padding:10px 12px;background:#f7f8fa;border-radius:10px;cursor:pointer">
@@ -370,9 +371,33 @@
     return { html: `<div style="display:flex;flex-wrap:wrap;gap:6px 2px;padding:10px 16px 2px;border-bottom:1px solid #f5f5f5">${summary}</div>${cards}`, count: posts.length };
   }
 
+  // 圈子详情内的按年分布迷你柱：哪年发得多一眼可见，点击柱 = 只看该年（再点取消）
+  function topicYearBars(posts, activeYear) {
+    const byYear = new Map();
+    for (const p of posts) {
+      const y = (p.date || '').slice(0, 4);
+      if (/^\d{4}$/.test(y)) byYear.set(y, (byYear.get(y) || 0) + 1);
+    }
+    const years = [...byYear.entries()].sort(([a], [b]) => a.localeCompare(b));
+    if (years.length < 2) return ''; // 单年（或全部无日期）没有分布可言
+    const max = Math.max(...years.map(([, c]) => c), 1);
+    const cols = years.map(([y, c]) => {
+      const h = Math.max(4, Math.round((c / max) * 36));
+      const on = y === activeYear;
+      return `<div class="kojike-tyear" data-y="${y}" title="${y} 年 ${c} 条 · 点击${on ? '取消过滤' : '只看该年'}" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;min-width:26px">
+        <div style="display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:52px">
+          <span style="font-size:9px;color:${on ? JIKE_BLUE : '#bbb'};font-weight:${on ? 600 : 400}">${c}</span>
+          <i style="display:block;width:16px;height:${h}px;border-radius:3px 3px 0 0;background:${on ? JIKE_BLUE : '#d6dade'}"></i>
+        </div>
+        <span style="font-size:9px;color:${on ? JIKE_BLUE : '#999'};padding:1px 0 2px">${y.slice(2)}年</span>
+      </div>`;
+    }).join('');
+    return `<div style="display:flex;align-items:flex-end;gap:6px;overflow-x:auto;padding:8px 16px 0;border-bottom:1px solid #f5f5f5">${cols}</div>`;
+  }
+
   // ---------- 全量抓取（平移 App 版 FetchEngine 策略） ----------
   // 手动触发；loadMoreKey 游标翻页；限速 + 退避 + 硬上限，fail-closed
-  const fetchState = { running: false, user: null, fetched: 0, error: null };
+  const fetchState = { running: false, user: null, fetched: 0, error: null, stopRequested: false, notice: null };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function fetchAll(user) {
@@ -381,11 +406,17 @@
     fetchState.user = user;
     fetchState.fetched = 0;
     fetchState.error = null;
+    fetchState.notice = null;
+    fetchState.stopRequested = false;
     let consecutiveFailures = 0;
 
     try {
       let loadMoreKey;
       for (let page = 0; page < 600; page++) {
+        if (fetchState.stopRequested) {
+          fetchState.notice = `已停止，本次新增 ${fetchState.fetched} 条`;
+          break;
+        }
         // 离开该用户主页（SPA 路由变化）即中止
         if (profileUsername() !== user) throw new Error('已离开该用户主页，抓取中止');
         const headers = { 'content-type': 'application/json', platform: 'web' };
@@ -503,16 +534,19 @@
         </div>${body}`;
     } else if (panelView.mode === 'posts') {
       const t = topics.find((x) => x.name === panelView.topic);
-      title = `‹ ${panelView.topic}`;
-      const cards = (t?.posts || [])
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      const fy = panelView.year;
+      title = fy ? `‹ ${panelView.topic} · ${fy}` : `‹ ${panelView.topic}`;
+      const all = (t?.posts || []).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const shown = fy ? all.filter((p) => (p.date || '').startsWith(fy)) : all;
+      const dist = topicYearBars(all, fy);
+      const cards = shown
         .map((p) => `
           <div class="kojike-post" data-id="${esc(p.id)}" data-type="${esc(p.type)}" style="margin:8px 12px;padding:10px 12px;background:#f7f8fa;border-radius:10px;cursor:pointer">
             <div style="color:#999;font-size:11px;margin-bottom:3px">${esc((p.date || '').slice(0, 10) || '日期未知')}</div>
             <div style="overflow:hidden">${esc(p.content || '<i>无文字内容</i>')}</div>
           </div>`)
         .join('');
-      bodyHtml = cards || `<div style="padding:24px 16px;text-align:center;color:#999">该圈子暂无明细</div>`;
+      bodyHtml = dist + (cards || `<div style="padding:24px 16px;text-align:center;color:#999">${fy ? `${esc(fy)} 年该圈子暂无动态` : '该圈子暂无明细'}</div>`);
     } else {
       // 注意 topics 数组必须 join('')，否则隐式 toString 会在行间插入逗号
       bodyHtml = topics.length
@@ -525,6 +559,9 @@
       if (fetchState.error) {
         bodyHtml += `<div style="padding:6px 16px 10px;color:#e5484d;font-size:12px">✕ ${esc(fetchState.error)}</div>`;
       }
+      if (fetchState.notice) {
+        bodyHtml += `<div style="padding:6px 16px 10px;color:#999;font-size:12px">⏹ ${esc(fetchState.notice)}</div>`;
+      }
       bodyHtml += `<div style="border-top:1px solid #f2f2f2;padding:8px 16px;color:#bbb;font-size:11px">
         统计范围 = 已加载/已抓取的动态；「全量」自动翻页抓取该用户全部动态（限速约 1-2 条/秒）</div>`;
     }
@@ -534,6 +571,7 @@
       <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #f2f2f2">
         <b id="kojike-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:${panelView.mode !== 'topics' ? 'pointer' : 'default'}">${esc(title)}</b>
         ${panelView.mode === 'topics' ? `<span id="kojike-progress" style="color:#999;font-size:12px;white-space:nowrap">${fetching ? `${fetchState.fetched} 条…` : ''}</span>` : ''}
+        ${panelView.mode === 'topics' && fetching ? `<span id="kojike-stop" style="color:#e5484d;font-weight:600;cursor:pointer;white-space:nowrap">■ 停止</span>` : ''}
         ${panelView.mode === 'topics' && !fetching ? `<span id="kojike-fetchall" style="color:${JIKE_BLUE};font-weight:600;cursor:pointer;white-space:nowrap">全量</span>` : ''}
         ${panelView.mode === 'topics' && topics.length ? `<span id="kojike-chart" title="图表统计" style="cursor:pointer">📈</span>` : ''}
         <span id="kojike-clear" style="color:#e5484d;cursor:pointer">清空</span>
@@ -544,6 +582,7 @@
     panel.querySelector('#kojike-chart-dim')?.addEventListener('change', (e) => { setDim(e.target.value); renderPanel(); });
     panel.querySelector('#kojike-chart-type')?.addEventListener('change', (e) => { setChartType(e.target.value); renderPanel(); });
     panel.querySelector('#kojike-fetchall')?.addEventListener('click', () => { fetchAll(viewingUser); renderPanel(); });
+    panel.querySelector('#kojike-stop')?.addEventListener('click', () => { fetchState.stopRequested = true; renderPanelProgress(); });
     panel.querySelector('#kojike-clear').onclick = () => {
       const db = loadDb();
       delete db[viewingUser];
@@ -553,13 +592,16 @@
       renderPanel(); renderChip();
     };
     if (panelView.mode === 'year') {
-      // 年度明细：标题返回图表，卡片跳详情（与圈子明细同一套交互）
+      // 年度明细：标题返回图表，卡片跳详情；圈子胶囊下钻「该年 × 该圈子」
       panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'chart' }; renderPanel(); };
       panel.querySelectorAll('.kojike-post').forEach((el) => {
         el.onclick = () => {
           const route = detailRoute(el.dataset.type, el.dataset.id, viewingUser);
           if (route) location.assign(route);
         };
+      });
+      panel.querySelectorAll('.kojike-ytopic').forEach((el) => {
+        el.onclick = () => { panelView = { mode: 'posts', topic: el.dataset.topic, year: panelView.year, back: { mode: 'year', year: panelView.year } }; renderPanel(); };
       });
     } else if (panelView.mode === 'chart') {
       // 饼图扇区/图例、柱状图行点击 → 该圈子明细（「其他」除外）；年度柱点击 → 该年明细
@@ -575,8 +617,18 @@
       });
       panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'topics' }; renderPanel(); };
     } else if (panelView.mode === 'posts') {
-      // 标题即「‹ 圈子名」返回按钮（对应 App 版二级页交互）
-      panel.querySelector('#kojike-title').onclick = () => { panelView = { mode: 'topics' }; renderPanel(); };
+      // 标题即「‹ 圈子名」返回按钮：从年度页下钻来的返回年度页，否则回列表
+      panel.querySelector('#kojike-title').onclick = () => { panelView = panelView.back ? { ...panelView.back } : { mode: 'topics' }; renderPanel(); };
+      // 年度分布柱：点击 = 只看该年（再点取消；取消后返回箭头回到列表）
+      panel.querySelectorAll('.kojike-tyear').forEach((el) => {
+        el.onclick = () => {
+          const y = el.dataset.y;
+          panelView = panelView.year === y
+            ? { mode: 'posts', topic: panelView.topic }
+            : { mode: 'posts', topic: panelView.topic, year: y, back: panelView.back };
+          renderPanel();
+        };
+      });
       panel.querySelectorAll('.kojike-post').forEach((el) => {
         el.onclick = () => {
           const route = detailRoute(el.dataset.type, el.dataset.id, viewingUser);
@@ -602,7 +654,7 @@
   function renderPanelProgress() {
     if (!panelOpen) return;
     const el = document.getElementById('kojike-progress');
-    if (el && fetchState.running) el.textContent = `${fetchState.fetched} 条…`;
+    if (el && fetchState.running) el.textContent = `${fetchState.fetched} 条…${fetchState.stopRequested ? '（停止中）' : ''}`;
   }
 
   // SPA 路由变化 + 数据到达都要重渲染（对应 App 版两处自动刷新）
