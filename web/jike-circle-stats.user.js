@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.6.1
+// @version      0.6.2
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -383,7 +383,7 @@
     return { html: `<div style="display:flex;flex-wrap:wrap;gap:6px 2px;padding:10px 16px 2px;border-bottom:1px solid #f5f5f5">${summary}</div>${cards}`, count: posts.length };
   }
 
-  // 圈子详情内的按年分布迷你柱：哪年发得多一眼可见，点击柱 = 只看该年（再点取消）
+  // 圈子详情内的按年分布图：哪年发得多一眼可见，点击柱 = 只看该年（再点取消）
   function topicYearBars(posts, activeYear) {
     const byYear = new Map();
     for (const p of posts) {
@@ -392,19 +392,29 @@
     }
     const years = [...byYear.entries()].sort(([a], [b]) => a.localeCompare(b));
     if (years.length < 2) return ''; // 单年（或全部无日期）没有分布可言
-    const max = Math.max(...years.map(([, c]) => c), 1);
-    const cols = years.map(([y, c]) => {
-      const h = Math.max(4, Math.round((c / max) * 36));
-      const on = y === activeYear;
-      return `<div class="kojike-tyear" data-y="${y}" title="${y} 年 ${c} 条 · 点击${on ? '取消过滤' : '只看该年'}" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;min-width:26px">
-        <div style="display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:52px">
-          <span style="font-size:9px;color:${on ? JIKE_BLUE : '#bbb'};font-weight:${on ? 600 : 400}">${c}</span>
-          <i style="display:block;width:16px;height:${h}px;border-radius:3px 3px 0 0;background:${on ? JIKE_BLUE : '#d6dade'}"></i>
-        </div>
-        <span style="font-size:9px;color:${on ? JIKE_BLUE : '#999'};padding:1px 0 2px">${y.slice(2)}年</span>
-      </div>`;
+    const maxY = Math.max(...years.map(([, c]) => c), 1);
+    const pl = 30, pr = 8, pt = 14, pb = 20;
+    const W = Math.max(328, pl + pr + years.length * 34); // 年份多时横向滚动
+    const H = 150, plotH = H - pt - pb;
+    const slot = (W - pl - pr) / years.length;
+    const x = (i) => pl + (i + 0.5) * slot;
+    const y = (v) => pt + (1 - v / maxY) * plotH;
+    const bw = Math.min(28, slot * 0.6);
+    const grid = [0, Math.round(maxY / 2), maxY].map((v) =>
+      `<line x1="${pl}" y1="${y(v).toFixed(1)}" x2="${W - pr}" y2="${y(v).toFixed(1)}" stroke="#eef0f2"/>
+       <text x="${pl - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${v}</text>`).join('');
+    const bars = years.map(([yr, c], i) => {
+      const on = yr === activeYear;
+      const color = on ? JIKE_BLUE : '#d6dade';
+      const rect = `<rect class="kojike-tyear" data-y="${yr}" x="${(x(i) - bw / 2).toFixed(1)}" y="${y(c).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, plotH + pt - y(c)).toFixed(1)}" rx="3" fill="${color}"/>`;
+      const labels = `<text x="${x(i).toFixed(1)}" y="${(y(c) - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="${on ? JIKE_BLUE : '#999'}" font-weight="${on ? 600 : 400}">${c}</text>
+        <text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="${on ? JIKE_BLUE : '#666'}">${yr.slice(2)}年</text>`;
+      // 整列命中区放最上层：柱、数字、年份标签任意位置点击都生效
+      const hit = `<rect class="kojike-tyear" data-y="${yr}" x="${(x(i) - slot / 2).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H}" fill="transparent"><title>${yr} 年 ${c} 条 · 点击${on ? '取消过滤' : '只看该年'}</title></rect>`;
+      return rect + labels + hit;
     }).join('');
-    return `<div style="display:flex;align-items:flex-end;gap:6px;overflow-x:auto;padding:8px 16px 0;border-bottom:1px solid #f5f5f5">${cols}</div>`;
+    return `<div style="overflow-x:auto;padding:10px 10px 2px 4px">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;min-width:100%">${grid}${bars}</svg></div>`;
   }
 
   // ---------- 全量抓取（平移 App 版 FetchEngine 策略） ----------
