@@ -14,16 +14,23 @@ android {
         versionName = "0.1.0"
     }
 
+    // 沙箱写不了 ~/.android，debug 签名指到 local/ 下已生成的 keystore（本地产物，不入库）
+    // 文件不存在时（如新 clone）回退 Android 默认 debug 签名
+    val debugKeystore = rootProject.file("local/debug.keystore")
+
     signingConfigs {
-        // 沙箱写不了 ~/.android，debug 签名指到工程内已生成的 keystore
-        getByName("debug") {
-            storeFile = rootProject.file("debug.keystore")
+        if (debugKeystore.exists()) {
+            getByName("debug") {
+                storeFile = debugKeystore
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("debug")
+            if (debugKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 

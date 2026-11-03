@@ -4,12 +4,15 @@
 .jadxhome/
 .kotlin/
 .xdg-config/
+# 本地产物：逆向用 APK、实机验证截图、沙箱生成的 debug keystore，一律不推送
+local/
+.DS_Store
 apk/
+
+# 构建产物与本地配置
 app/build/
 build/
-jike-*.apk
 local.properties
-verification-*.png
-verification-final.png
+
 web/recon/
 web/extension/*.zip
