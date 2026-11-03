@@ -25,6 +25,10 @@ git tag v0.1.0 && git push origin v0.1.0
 
 版本号从 tag 注入构建（`moduleVersion` / `moduleVersionCode`），无需手改 gradle。
 
+## 许可证
+
+双重许可（[LICENSE](LICENSE)）：使用者任选 **MIT** 或 **GPL-3.0** 之一遵守即可。
+
 ## 目录
 
 | 目录 | 说明 |
