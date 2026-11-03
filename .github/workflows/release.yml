@@ -1,0 +1,61 @@
+name: Release
+
+# 推送 v* 标签自动构建 LSPosed 模块 APK + Chrome 扩展 zip，发布到 GitHub Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Parse version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CODE=$(echo "$VERSION" | awk -F. '{print $1*10000+$2*100+$3}')
+          {
+            echo "MODULE_VERSION=$VERSION"
+            echo "MODULE_VERSION_CODE=$CODE"
+          } >> "$GITHUB_ENV"
+
+      - name: Build LSPosed module APK
+        run: >
+          ./gradlew assembleDebug
+          -PmoduleVersion=${{ env.MODULE_VERSION || '0.1.0' }}
+          -PmoduleVersionCode=${{ env.MODULE_VERSION_CODE || '1' }}
+
+      - name: Stage artifacts
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk kojike-v${{ env.MODULE_VERSION || '0.1.0' }}.apk
+
+      - name: Build Chrome extension zip
+        run: |
+          cd web/extension
+          node build.mjs
+          zip -r "$GITHUB_WORKSPACE/jike-circle-stats-extension-v${{ env.MODULE_VERSION || '0.1.0' }}.zip" manifest.json content.js
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            kojike-v*.apk
+            jike-circle-stats-extension-v*.zip

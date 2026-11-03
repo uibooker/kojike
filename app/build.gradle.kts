@@ -10,8 +10,9 @@ android {
         applicationId = "io.github.booker.kojike"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI 打 release 时用 tag 注入：-PmoduleVersion=0.1.0 -PmoduleVersionCode=100
+        versionCode = (project.findProperty("moduleVersionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("moduleVersion") as String?) ?: "0.1.0"
     }
 
     // 沙箱写不了 ~/.android，debug 签名指到 local/ 下已生成的 keystore（本地产物，不入库）
