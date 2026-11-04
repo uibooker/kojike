@@ -603,7 +603,7 @@
     } else if (panelView.mode === 'posts') {
       const t = topics.find((x) => x.name === panelView.topic);
       const fy = panelView.year;
-      title = fy ? `‹ ${panelView.topic} · ${fy}` : `‹ ${panelView.topic}`;
+      title = fy ? `${panelView.topic} · ${fy}` : `${panelView.topic}`;
       const all = (t?.posts || []).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       const shown = fy ? all.filter((p) => (p.date || '').startsWith(fy)) : all;
       const dist = topicYearBars(all, fy);

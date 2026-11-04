@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.7.0
+// @version      0.7.1
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -612,7 +612,7 @@
     } else if (panelView.mode === 'posts') {
       const t = topics.find((x) => x.name === panelView.topic);
       const fy = panelView.year;
-      title = fy ? `‹ ${panelView.topic} · ${fy}` : `‹ ${panelView.topic}`;
+      title = fy ? `${panelView.topic} · ${fy}` : `${panelView.topic}`;
       const all = (t?.posts || []).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       const shown = fy ? all.filter((p) => (p.date || '').startsWith(fy)) : all;
       const dist = topicYearBars(all, fy);
