@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         即刻圈子统计
 // @namespace    io.github.booker.kojike
-// @version      0.6.2
+// @version      0.7.0
 // @description  在即刻网页版个人页统计当前浏览用户在哪些圈子发过动态、各发了多少条
 // @match        https://web.okjike.com/*
 // @run-at       document-start
@@ -44,20 +44,25 @@
     const m = location.pathname.match(/^\/u\/([^/]+?)(?:\/(gallery|collection|topic|post|repost))?\/?$/);
     return m ? decodeURIComponent(m[1]) : null;
   };
+  // /u/ 下任意路由（含动态详情页）的所属用户——UI 展示用；入库仍用 profileUsername 严格判定
+  const pageUser = () => {
+    const m = location.pathname.match(/^\/u\/([^/]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  };
+  // 详情页路由（/u/{user}/post/{id} 等）
+  const isDetailPath = (p) => /^\/u\/[^/]+\/(post|repost)\//.test(p);
   // 动态详情路由映射，与宿主 bundle 的 De 常量一致
   const detailRoute = (type, id, username) => {
     const t = { ORIGINAL_POST: 'post', REPOST: 'repost', PERSONAL_UPDATE: 'post' }[type];
     return t ? `/u/${username}/${t}/${id}` : null;
   };
-  // 详情返回后面板视图恢复键（sessionStorage：随标签页，不跨会话打扰）
-  const PANEL_RESUME_KEY = 'kojike_panel_resume';
   // SPA 原生方式进详情：pushState + popstate 驱动宿主路由。
   // 整页 location.assign 会让宿主在新文档里渲染「什么也找不到｜返回首页」，
   // 且浏览器返回后 SPA 状态全丢；SPA 路由则 feed 保持在内存里，返回即回个人页原位。
+  // 面板在同用户内跳详情时保持展开（v0.7.0），无需再借 sessionStorage 恢复视图。
   const goDetail = (type, id) => {
     const route = detailRoute(type, id, viewingUser);
     if (!route) return;
-    try { sessionStorage.setItem(PANEL_RESUME_KEY, JSON.stringify({ view: panelView, user: viewingUser })) } catch { /* 忽略 */ }
     history.pushState({}, '', route);
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
@@ -201,34 +206,62 @@
   function pieSvg(topics) {
     const data = sliceData(topics, 8);
     const total = data.reduce((s, d) => s + d.count, 0) || 1;
-    const cx = 75, cy = 75, r2 = 66, r1 = 40;
+    const W = 348, H = 248, cx = 174, cy = 122, r1 = 44, r2 = 76;
+    const colorOf = (name, i) => (name === NO_TOPIC ? NO_TOPIC_COLOR : PALETTE[i % PALETTE.length]);
     let a = -Math.PI / 2;
-    const slices = data.map((d, i) => {
-      const color = PALETTE[i % PALETTE.length];
+    const geo = data.map((d, i) => {
+      const a0 = a;
+      const ang = (d.count / total) * Math.PI * 2;
+      a += ang;
+      return { d, i, ang, mid: a0 + ang / 2 };
+    });
+    const slices = geo.map(({ d, i, ang, mid }) => {
+      const color = colorOf(d.name, i);
       const pct = Math.round((d.count / total) * 1000) / 10;
       const title = `<title>${esc(d.name)} ${d.count}条 (${pct}%)</title>`;
       // 单一扇区画不成弧（起终点重合），退化为整环
-      if (data.length === 1) {
+      if (geo.length === 1) {
         return `<circle cx="${cx}" cy="${cy}" r="${(r1 + r2) / 2}" fill="none" stroke="${color}" stroke-width="${r2 - r1}">${title}</circle>`;
       }
-      const ang = (d.count / total) * Math.PI * 2;
-      const a0 = a; a += ang;
+      const a0 = mid - ang / 2, a1 = mid + ang / 2;
       const p = (r, x) => [cx + r * Math.cos(x), cy + r * Math.sin(x)].map((n) => n.toFixed(1));
-      const [x0, y0] = p(r2, a0), [x1, y1] = p(r2, a), [x2, y2] = p(r1, a), [x3, y3] = p(r1, a0);
+      const [x0, y0] = p(r2, a0), [x1, y1] = p(r2, a1), [x2, y2] = p(r1, a1), [x3, y3] = p(r1, a0);
       const large = ang > Math.PI ? 1 : 0;
       return `<path class="kojike-slice" data-i="${i}" d="M${x0} ${y0} A${r2} ${r2} 0 ${large} 1 ${x1} ${y1} L${x2} ${y2} A${r1} ${r1} 0 ${large} 0 ${x3} ${y3} Z" fill="${color}">${title}</path>`;
     }).join('');
+    // 外侧标签（引导线 + 圈子名 + 占比）：左右两侧分组，各按 y 排序后拉开最小间距防重叠
+    const left = [], right = [];
+    for (const g of geo) (Math.cos(g.mid) >= 0 ? right : left).push(g);
+    for (const side of [left, right]) {
+      side.sort((x, y) => Math.sin(x.mid) - Math.sin(y.mid));
+      let last = -Infinity;
+      for (const g of side) {
+        let ly = Math.max(14, Math.min(H - 14, cy + Math.sin(g.mid) * (r2 + 14)));
+        g.ly = last > -Infinity && ly - last < 13 ? last + 13 : ly;
+        last = g.ly;
+      }
+    }
+    const label = (g) => {
+      const pct = Math.round((g.d.count / total) * 1000) / 10;
+      const isR = Math.cos(g.mid) >= 0;
+      const name = g.d.name.length > 5 ? g.d.name.slice(0, 5) + '…' : g.d.name;
+      const sx = cx + Math.cos(g.mid) * (r2 + 2), sy = cy + Math.sin(g.mid) * (r2 + 2);
+      const mx = cx + Math.cos(g.mid) * (r2 + 12);
+      const tx = cx + (isR ? 1 : -1) * (r2 + 18);
+      return `<polyline points="${sx.toFixed(1)},${sy.toFixed(1)} ${mx.toFixed(1)},${g.ly.toFixed(1)} ${(isR ? tx - 3 : tx + 3).toFixed(1)},${g.ly.toFixed(1)}" fill="none" stroke="${colorOf(g.d.name, g.i)}" stroke-width="1"/>
+        <text x="${tx.toFixed(1)}" y="${(g.ly + 3).toFixed(1)}" text-anchor="${isR ? 'start' : 'end'}" font-size="10" fill="#555">${esc(name)} <tspan fill="#999">${pct}%</tspan></text>`;
+    };
     const legend = data.map((d, i) => {
       const pct = Math.round((d.count / total) * 1000) / 10;
       return `<span class="kojike-legend" data-i="${i}" style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;cursor:pointer">
-        <i style="width:9px;height:9px;border-radius:50%;background:${PALETTE[i % PALETTE.length]}"></i>
+        <i style="width:9px;height:9px;border-radius:50%;background:${colorOf(d.name, i)}"></i>
         <span style="max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name)}</span>
         <b style="color:${JIKE_BLUE}">${d.count}</b><span style="color:#bbb">${pct}%</span></span>`;
     }).join('');
     return `<div style="text-align:center;padding-top:6px">
-      <svg width="150" height="150" viewBox="0 0 150 150" style="display:block;margin:0 auto">${slices}
-        <text x="75" y="71" text-anchor="middle" font-size="20" font-weight="700" fill="#333">${total}</text>
-        <text x="75" y="88" text-anchor="middle" font-size="10" fill="#999">条动态</text></svg>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;margin:0 auto">${slices}${left.map(label).join('')}${right.map(label).join('')}
+        <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="20" font-weight="700" fill="#333">${total}</text>
+        <text x="${cx}" y="${cy + 15}" text-anchor="middle" font-size="10" fill="#999">条动态</text></svg>
       <div style="text-align:left;padding:6px 12px 10px">${legend}</div></div>`;
   }
 
@@ -239,7 +272,7 @@
       <div class="kojike-bar" data-i="${i}" style="display:flex;align-items:center;gap:8px;margin:7px 0;cursor:pointer">
         <span style="flex:0 0 96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555;text-align:right">${esc(d.name)}</span>
         <span style="flex:1;height:14px;background:#f0f1f3;border-radius:7px;overflow:hidden">
-          <i style="display:block;height:100%;width:${(d.count / max * 100).toFixed(1)}%;background:${PALETTE[i % PALETTE.length]};border-radius:7px"></i>
+          <i style="display:block;height:100%;width:${(d.count / max * 100).toFixed(1)}%;background:${d.name === NO_TOPIC ? NO_TOPIC_COLOR : PALETTE[i % PALETTE.length]};border-radius:7px"></i>
         </span>
         <b style="flex:0 0 28px;color:${JIKE_BLUE};text-align:right">${d.count}</b>
       </div>`).join('') + `</div>`;
@@ -280,7 +313,7 @@
       return `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="9" fill="#bbb">${label}</text>`;
     }).join('');
     const lines = top5.map((t, i) => {
-      const color = PALETTE[i % PALETTE.length];
+      const color = t.name === NO_TOPIC ? NO_TOPIC_COLOR : PALETTE[i % PALETTE.length];
       const pts = keys.map((k, j) => `${x(j).toFixed(1)},${y(byMonth.get(k)?.[t.name] || 0).toFixed(1)}`).join(' ');
       const dots = keys.map((k, j) => {
         const v = byMonth.get(k)?.[t.name] || 0;
@@ -289,7 +322,7 @@
       return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>${dots}`;
     }).join('');
     const legend = top5.map((t, i) => `<span style="display:inline-flex;align-items:center;gap:4px;margin:3px 8px 3px 0">
-        <i style="width:9px;height:9px;border-radius:50%;background:${PALETTE[i % PALETTE.length]}"></i>
+        <i style="width:9px;height:9px;border-radius:50%;background:${t.name === NO_TOPIC ? NO_TOPIC_COLOR : PALETTE[i % PALETTE.length]}"></i>
         <span style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span></span>`).join('');
     return `<div style="padding:8px 10px 10px"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${lines}${xlabels}</svg>
       <div style="padding:0 4px">${legend}</div></div>`;
@@ -316,7 +349,8 @@
   function yearStackSvg(topics) {
     const { years, noDate } = yearBuckets(topics);
     if (!years.length) return `<div style="padding:24px 16px;text-align:center;color:#999">动态缺少日期信息，无法做年度统计</div>`;
-    const top4 = topics.slice(0, 4).map((t) => t.name);
+    // top4 排除「无圈子」：否则它会既占一个 palette 蓝色分段、又叠加灰色分段，图上出现两个无圈子（朋友反馈 #5）
+    const top4 = topics.filter((t) => t.name !== NO_TOPIC).slice(0, 4).map((t) => t.name);
     const W = 328, H = 190, pl = 30, pr = 10, pt = 12, pb = 22;
     const maxY = Math.max(...years.map(([, o]) => o.total), 1);
     const bw = Math.min(46, (W - pl - pr) / years.length * 0.62);
@@ -423,7 +457,7 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function fetchAll(user) {
-    if (fetchState.running) return;
+    if (fetchState.running || loadDb()[user]?.full) return;
     fetchState.running = true;
     fetchState.user = user;
     fetchState.fetched = 0;
@@ -477,7 +511,12 @@
         notifyChange(user);
         renderPanelProgress();
 
-        if (!json.loadMoreKey) break; // 游标到底
+        if (!json.loadMoreKey) {
+          // 游标到底：标记该用户已全量，按钮置灰防重复抓（朋友反馈：全量会被连按两次）
+          const db = loadDb();
+          if (db[user]) { db[user].full = true; saveDb(db); }
+          break;
+        }
         loadMoreKey = json.loadMoreKey;
         await sleep(400 + Math.random() * 400);
       }
@@ -493,7 +532,7 @@
   }
 
   function renderChip() {
-    const user = profileUsername();
+    const user = pageUser(); // /u/ 下任意路由（含动态详情页）都显示 chip（朋友反馈 #4）
     if (!user) { uiRoot?.remove(); uiRoot = null; viewingUser = null; return; }
     const { total } = statsOf(user);
     if (!uiRoot) {
@@ -508,10 +547,21 @@
       });
       uiRoot.addEventListener('click', () => { panelOpen = true; renderPanel(); });
       document.body.appendChild(uiRoot);
+      ensureStyles();
     }
     viewingUser = user;
     uiRoot.textContent = `📊 圈子统计 · ${total}`;
   }
+
+  // 扇区/图例/列表行的 hover 反馈（SVG 内联元素无 :hover 以外的廉价方案）
+  const ensureStyles = () => {
+    if (document.getElementById('kojike-style')) return;
+    const s = document.createElement('style');
+    s.id = 'kojike-style';
+    s.textContent = `.kojike-slice:hover,.kojike-legend:hover{opacity:.72}
+      .kojike-bar:hover,.kojike-topic:hover,.kojike-post:hover{background:#f7f8fa}`;
+    document.head.appendChild(s);
+  };
 
   function renderPanel() {
     document.getElementById('kojike-stats-panel')?.remove();
@@ -526,6 +576,11 @@
       background: '#fff', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,.22)',
       font: '13px/1.5 -apple-system, sans-serif', color: '#333',
     });
+    // 记忆的面板尺寸：左缘拖宽、上缘拖高（朋友反馈 #3：看长列表想一屏显示更多）
+    let panelSize = {};
+    try { panelSize = JSON.parse(localStorage.getItem('kojike_panel_size')) || {} } catch { /* 忽略 */ }
+    if (panelSize.w) panel.style.width = `${panelSize.w}px`;
+    if (panelSize.h) panel.style.maxHeight = `${panelSize.h}px`;
 
     let bodyHtml;
     let title = `圈子统计 · 共 ${total} 条动态`;
@@ -585,20 +640,31 @@
         bodyHtml += `<div style="padding:6px 16px 10px;color:#999;font-size:12px">⏹ ${esc(fetchState.notice)}</div>`;
       }
       bodyHtml += `<div style="border-top:1px solid #f2f2f2;padding:8px 16px;color:#bbb;font-size:11px">
-        统计范围 = 已加载/已抓取的动态；「全量」自动翻页抓取该用户全部动态（限速约 1-2 条/秒）</div>`;
+        统计范围 = 已加载/已抓取的动态；「全量」自动翻页抓取该用户全部动态（限速约 1-2 条/秒）；拖面板左缘/上缘可调整大小</div>`;
     }
 
     const fetching = fetchState.running && fetchState.user === viewingUser;
+    const fullDone = !!loadDb()[viewingUser]?.full;
     panel.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #f2f2f2">
+        ${panelView.mode !== 'topics' ? `<span id="kojike-back" style="color:${JIKE_BLUE};font-weight:600;cursor:pointer;white-space:nowrap;flex:none">‹ 返回</span>` : ''}
         <b id="kojike-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:${panelView.mode !== 'topics' ? 'pointer' : 'default'}">${esc(title)}</b>
         ${panelView.mode === 'topics' ? `<span id="kojike-progress" style="color:#999;font-size:12px;white-space:nowrap">${fetching ? `${fetchState.fetched} 条…` : ''}</span>` : ''}
         ${panelView.mode === 'topics' && fetching ? `<span id="kojike-stop" style="color:#e5484d;font-weight:600;cursor:pointer;white-space:nowrap">■ 停止</span>` : ''}
-        ${panelView.mode === 'topics' && !fetching ? `<span id="kojike-fetchall" style="color:${JIKE_BLUE};font-weight:600;cursor:pointer;white-space:nowrap">全量</span>` : ''}
-        ${panelView.mode === 'topics' && topics.length ? `<span id="kojike-chart" title="图表统计" style="cursor:pointer">📈</span>` : ''}
-        <span id="kojike-clear" style="color:#e5484d;cursor:pointer">清空</span>
-        <span id="kojike-close" style="color:#999;cursor:pointer;padding:0 4px">✕</span>
+        ${panelView.mode === 'topics' && !fetching ? (fullDone
+          ? `<span title="该用户动态已全部抓取入库" style="color:#c9cdd1;font-weight:600;white-space:nowrap">已全量</span>`
+          : `<span id="kojike-fetchall" style="color:${JIKE_BLUE};font-weight:600;cursor:pointer;white-space:nowrap">全量</span>`) : ''}
+        ${panelView.mode === 'topics' && topics.length ? `<span id="kojike-chart" title="查看图表统计" style="color:#fff;background:${JIKE_BLUE};border-radius:12px;padding:3px 9px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex:none">📈 图表</span>` : ''}
+        <span id="kojike-clear" style="color:#e5484d;cursor:pointer;flex:none">清空</span>
+        <span id="kojike-close" style="color:#999;cursor:pointer;padding:0 4px;flex:none">✕</span>
       </div>${bodyHtml}`;
+    // 「‹ 返回」按视图层级回退：年度明细 → 图表；圈子明细 → 记住的来源（年度页或列表）；其余 → 列表
+    panel.querySelector('#kojike-back')?.addEventListener('click', () => {
+      panelView = panelView.mode === 'year' ? { mode: 'chart' }
+        : panelView.mode === 'posts' && panelView.back ? { ...panelView.back }
+        : { mode: 'topics' };
+      renderPanel();
+    });
     panel.querySelector('#kojike-close').onclick = () => { panelOpen = false; panelView = { mode: 'topics' }; renderPanel(); };
     panel.querySelector('#kojike-chart')?.addEventListener('click', () => { panelView = { mode: 'chart' }; renderPanel(); });
     panel.querySelector('#kojike-chart-dim')?.addEventListener('change', (e) => { setDim(e.target.value); renderPanel(); });
@@ -659,11 +725,37 @@
         };
       });
     }
+    // 边缘拖拽调尺寸：命中面板左缘 10px 拖宽、上缘 10px 拖高；面板每次重绘都重新挂监听
+    panel.addEventListener('pointerdown', (e) => {
+      const rect = panel.getBoundingClientRect();
+      const nearLeft = e.clientX - rect.left < 10;
+      const nearTop = e.clientY - rect.top < 10;
+      if (!nearLeft && !nearTop) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, sw = panel.offsetWidth, sh = panel.offsetHeight;
+      const move = (ev) => {
+        if (nearLeft) {
+          panelSize.w = Math.min(560, Math.max(300, sw + (sx - ev.clientX)));
+          panel.style.width = `${panelSize.w}px`;
+        }
+        if (nearTop) {
+          panelSize.h = Math.min(window.innerHeight - 90, Math.max(240, sh + (sy - ev.clientY)));
+          panel.style.maxHeight = `${panelSize.h}px`;
+        }
+      };
+      const up = () => {
+        removeEventListener('pointermove', move);
+        removeEventListener('pointerup', up);
+        try { localStorage.setItem('kojike_panel_size', JSON.stringify(panelSize)) } catch { /* 忽略 */ }
+      };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', up);
+    });
     document.body.appendChild(panel);
   }
 
   const notifyChange = (user) => {
-    if (user === profileUsername()) renderChip();
+    if (user === pageUser()) renderChip();
   };
 
   // 抓取中的进度只更新行内文字，不整面板重绘（避免打断用户滚动列表）
@@ -675,35 +767,32 @@
 
   // SPA 路由变化 + 数据到达都要重渲染（对应 App 版两处自动刷新）
   let lastPath = location.pathname;
+  const handleRoute = () => {
+    if (location.pathname === lastPath) return; // goDetail 自派的 popstate，pushState 包装器已处理
+    const prevUser = viewingUser;
+    const wasOpen = panelOpen;
+    lastPath = location.pathname;
+    renderChip(); // 先刷新 viewingUser（/u/ 下任意路由都保留 chip，含详情页），renderPanel 依赖它
+    const user = pageUser();
+    if (!user || user !== prevUser || !wasOpen) {
+      // 换了浏览对象 / 离开 /u/ 域 / 面板本来关着：收起复位
+      panelOpen = false;
+      panelView = { mode: 'topics' };
+    }
+    // 同一用户内跳转（典型：从卡片进动态详情）且面板开着 → 面板原地保持、视图不动（朋友反馈 #4）
+    renderPanel();
+  };
   const wrapHistory = (name) => {
     const orig = history[name];
     history[name] = function () {
       const r = orig.apply(this, arguments);
-      queueMicrotask(() => { if (location.pathname !== lastPath) { lastPath = location.pathname; panelOpen = false; renderPanel(); renderChip(); } });
+      queueMicrotask(handleRoute);
       return r;
     };
   };
   wrapHistory('pushState');
   wrapHistory('replaceState');
-  addEventListener('popstate', () => {
-    queueMicrotask(() => {
-      if (location.pathname === lastPath) return; // goDetail 自派的 popstate，pushState 包装器已处理
-      lastPath = location.pathname;
-      // 浏览器返回到个人页：恢复跳转详情前的统计面板视图，接着看
-      let resume = null;
-      try { resume = JSON.parse(sessionStorage.getItem(PANEL_RESUME_KEY) || 'null') } catch { /* 忽略 */ }
-      if (resume && resume.user && resume.user === profileUsername()) {
-        panelOpen = true;
-        panelView = resume.view || { mode: 'topics' };
-        try { sessionStorage.removeItem(PANEL_RESUME_KEY) } catch { /* 忽略 */ }
-      } else {
-        panelOpen = false;
-        panelView = { mode: 'topics' };
-      }
-      renderChip(); // 先刷新 viewingUser（详情页期间被置空），renderPanel 依赖它
-      renderPanel();
-    });
-  });
+  addEventListener('popstate', () => queueMicrotask(handleRoute));
 
   // ---------- 启动 ----------
   armCapture();

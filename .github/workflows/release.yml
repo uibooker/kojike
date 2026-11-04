@@ -49,7 +49,9 @@ jobs:
         run: |
           cd web/extension
           node build.mjs
-          zip -r "$GITHUB_WORKSPACE/jike-circle-stats-extension-v${{ env.MODULE_VERSION || '0.1.0' }}.zip" manifest.json content.js
+          # 扩展 zip 用它自己的 @version（油猴脚本版本）命名，与模块 tag 解耦
+          EXT_VERSION=$(node -p "require('./manifest.json').version")
+          zip -r "$GITHUB_WORKSPACE/jike-circle-stats-extension-v${EXT_VERSION}.zip" manifest.json content.js
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
